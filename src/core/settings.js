@@ -137,6 +137,7 @@ const DEFAULTS = {
 
   // Behaviour
   crewCutoffDays: 7, // sessions idle longer than this stay indoors; 0 puts everyone out
+  lobbyAudio: 'off', // off | latest | all — whether the town speaks the room's clips
   autoQuality: true, // drop render scale when frames get expensive
   autoFrame: false, // ease the camera back to isometric when you stop dragging; opt-in
   showFps: false,

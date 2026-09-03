@@ -12,7 +12,7 @@ import {
   scanThreads,
   setThreadArchived,
 } from './scan.mjs'
-import { say as lobbySay, snapshot as lobbySnapshot } from './tower.mjs'
+import { clip as lobbyClip, say as lobbySay, snapshot as lobbySnapshot } from './tower.mjs'
 
 const execFileAsync = promisify(execFile)
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -294,6 +294,15 @@ export async function apiMiddleware(req, res, next) {
     // no tower gets `available: false` and an empty room rather than an error.
     if (url.pathname === '/api/lobby' && req.method === 'GET') {
       return send(res, 200, await lobbySnapshot(Number(url.searchParams.get('since')) || 0))
+    }
+
+    // A room line's clip, streamed through from the tower for the page's own player.
+    const clipMatch = req.method === 'GET' && url.pathname.match(/^\/api\/lobby\/audio\/(\d+)$/)
+    if (clipMatch) {
+      const found = await lobbyClip(clipMatch[1])
+      if (!found) return send(res, 404, { error: 'No clip for that line' })
+      res.writeHead(200, { 'Content-Type': found.type, 'Content-Length': found.body.length, 'Cache-Control': 'private, max-age=3600' })
+      return res.end(found.body)
     }
 
     if (url.pathname === '/api/lobby' && req.method === 'POST') {
