@@ -276,6 +276,23 @@ function readJsonBody(req, limit = 4 * 1024 * 1024) {
   })
 }
 
+/**
+ * Do the first scan before anyone asks for it. A cold scan reads the head of every
+ * transcript and counts commits in every repo — 26 seconds on a machine with 1,600
+ * sessions — and the page's boot screen waits on it. Done once at startup, the first
+ * visitor gets the warm answer, which is under half a second.
+ */
+export async function warm() {
+  try {
+    const threads = await scanThreads()
+    const dirs = [...new Set(threads.map((t) => t.projectPath).filter((d) => d && path.isAbsolute(d)))]
+    await commitCounts(dirs)
+    console.log(`Bot Crossing: warmed ${threads.length} threads, ${dirs.length} repos`)
+  } catch (err) {
+    console.warn('Bot Crossing: warm-up failed —', err?.message || err)
+  }
+}
+
 /** Connect-style middleware: handles /api/*, passes everything else through. */
 export async function apiMiddleware(req, res, next) {
   const url = new URL(req.url, 'http://localhost')
