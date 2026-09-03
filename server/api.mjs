@@ -3,6 +3,7 @@ import path from 'node:path'
 import { execFile, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { createHash } from 'node:crypto'
 import {
   defaultHarness,
   harnessAppStartedAt,
@@ -200,6 +201,29 @@ function send(res, status, body) {
 }
 
 /**
+ * The thread list is two megabytes and polled every fifteen seconds, and most polls change
+ * nothing. So it carries an ETag over its own bytes, and a poll that presents the same tag
+ * gets a 304 and no body — which on a phone is the difference between a page that stays
+ * open and one that eats the connection. `scannedAt` is left out of the hash on purpose:
+ * it moves every poll and says nothing about the colony.
+ */
+function sendThreads(req, res, threads, repos) {
+  const payload = JSON.stringify({ threads, repos, scannedAt: Date.now() })
+  const tag = `"${createHash('sha1').update(JSON.stringify({ threads, repos })).digest('base64url')}"`
+  if (req.headers['if-none-match'] === tag) {
+    res.writeHead(304, { ETag: tag, 'Cache-Control': 'no-cache' })
+    return res.end()
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache',
+    ETag: tag,
+    'Content-Length': Buffer.byteLength(payload),
+  })
+  res.end(payload)
+}
+
+/**
  * Hosts this server answers to. Loopback always; anything else only by explicit allowlist
  * (`BOT_CROSSING_HOSTS=routerbox.xyz`), which is how the town is reached from the phone —
  * through a reverse proxy that carries that name and holds its own secret at the door.
@@ -307,7 +331,7 @@ export async function apiMiddleware(req, res, next) {
       const threads = await reconcileArchived(await scanThreads())
       const dirs = [...new Set(threads.map((t) => t.projectPath).filter((d) => d && path.isAbsolute(d)))]
       const repos = await commitCounts(dirs)
-      return send(res, 200, { threads, repos, scannedAt: Date.now() })
+      return sendThreads(req, res, threads, repos)
     }
 
     if (url.pathname === '/api/harnesses' && req.method === 'GET') {
