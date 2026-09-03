@@ -12,6 +12,7 @@ import {
   scanThreads,
   setThreadArchived,
 } from './scan.mjs'
+import { say as lobbySay, snapshot as lobbySnapshot } from './tower.mjs'
 
 const execFileAsync = promisify(execFile)
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -287,6 +288,18 @@ export async function apiMiddleware(req, res, next) {
 
     if (url.pathname === '/api/state' && req.method === 'PUT') {
       return send(res, 200, await writeState(await readJsonBody(req)))
+    }
+
+    // The tower's lobby, mirrored into the town. Reading starts the bridge; a colony with
+    // no tower gets `available: false` and an empty room rather than an error.
+    if (url.pathname === '/api/lobby' && req.method === 'GET') {
+      return send(res, 200, await lobbySnapshot(Number(url.searchParams.get('since')) || 0))
+    }
+
+    if (url.pathname === '/api/lobby' && req.method === 'POST') {
+      const { text, speak } = await readJsonBody(req)
+      const result = await lobbySay(text, { speak: speak !== false })
+      return send(res, result.ok ? 200 : 400, result)
     }
 
     if (url.pathname === '/api/open' && req.method === 'POST') {

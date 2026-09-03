@@ -17,6 +17,8 @@ import {
   archiveThread,
   newSession,
   revealFolder,
+  fetchLobby,
+  sayLobby,
 } from './game/api.js'
 
 /**
@@ -29,6 +31,8 @@ import {
  */
 
 const POLL_MS = 15000
+/** The lobby moves faster than the roster, and a line landing late reads as ignored. */
+const LOBBY_POLL_MS = 4000
 const app = document.getElementById('app')
 
 app.insertAdjacentHTML(
@@ -60,6 +64,8 @@ let selectedId = null
 let selectedProject = null
 let hoverId = null
 let statusCursor = 0
+/** Highest lobby line seen, so each poll asks only for what is new. */
+let lobbySeq = 0
 let pendingSave = 0
 const hoverGround = new THREE.Vector3()
 
@@ -233,6 +239,16 @@ const actions = {
   },
 
   uiVisibility: (visible) => colony.setUiVisible(visible),
+
+  /** A line into the tower's room, from the town. The reply lands on the next lobby poll. */
+  sayLobby: async (text) => {
+    try {
+      await sayLobby(text)
+      pollLobby()
+    } catch (err) {
+      hud.toast(err.message || 'The tower did not take that', 'err')
+    }
+  },
 
   // The card's bar is about the *thread*, not about how much of its building has risen —
   // those were the same number while construction was drawn by burying the structure.
@@ -624,6 +640,21 @@ async function poll() {
   }
 }
 
+let lobbyPolling = false
+async function pollLobby() {
+  if (lobbyPolling) return
+  lobbyPolling = true
+  try {
+    const snap = await fetchLobby(lobbySeq)
+    if (snap.seq > lobbySeq) lobbySeq = snap.seq
+    hud.setLobby(snap)
+  } catch {
+    hud.setLobby({ available: false, error: 'no colony server', lines: [], roster: [] })
+  } finally {
+    lobbyPolling = false
+  }
+}
+
 function queueSave() {
   clearTimeout(pendingSave)
   pendingSave = setTimeout(async () => {
@@ -666,6 +697,8 @@ async function boot() {
 
   await poll()
   setInterval(poll, POLL_MS)
+  pollLobby()
+  setInterval(pollLobby, LOBBY_POLL_MS)
   window.addEventListener('focus', poll)
   // A tab that was hidden for an hour should catch up the moment it comes back.
   document.addEventListener('visibilitychange', () => {
