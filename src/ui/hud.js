@@ -50,6 +50,18 @@ const AUDIO_ICON = {
   latest: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>`,
   all: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>`,
 }
+/**
+ * One light colour per speaker in the room, picked by name so it is the same on every
+ * visit and on every surface that uses the same rule. Light on purpose: the pane's text is
+ * white on near-black, and these tint only the name, never the line.
+ */
+const NICK_COLORS = ['#f6c48a', '#a8d8ff', '#c8f2b0', '#f4a9c8', '#e0c3ff', '#ffe08a', '#9fe6dc', '#ffb3a7', '#cfd8ff', '#d9f0a3']
+function nickColor(nick) {
+  let h = 0
+  for (const ch of String(nick || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return NICK_COLORS[h % NICK_COLORS.length]
+}
+
 const AUDIO_TITLE = {
   off: 'Room muted — click to hear only the newest line',
   latest: 'Newest line only — click to hear every line in order',
@@ -550,7 +562,7 @@ export class Hud {
         const chip = document.createElement('span')
         chip.className = `who ${r.state === 'live' ? 'live' : 'idle'}${r.sessionId ? ' robot' : ''}`
         chip.title = `${r.name} · ${r.state}${r.sessionId ? ' · click to find its robot' : ''}`
-        chip.innerHTML = `<i></i>${escapeHtml(r.nick)}`
+        chip.innerHTML = `<i></i><span style="color:${nickColor(r.nick)}">${escapeHtml(r.nick)}</span>`
         // A chip with a session id is a robot in the town: clicking flies to it.
         if (r.sessionId) chip.addEventListener('click', () => this.actions.focusThread?.(r.sessionId))
         wrap.appendChild(chip)
@@ -573,7 +585,8 @@ export class Hud {
       row.className = `line${l.from === 'user' ? ' user' : ''}${l.self ? ' self' : ''}${l.addressed ? ' addressed' : ''}`
       row.title = l.at ? new Date(l.at).toLocaleTimeString() : ''
       if (l.seq) row.dataset.seq = String(l.seq)
-      row.innerHTML = `<span class="nick">${escapeHtml(l.nick || l.from || '?')}</span>${escapeHtml(l.text)}`
+      const nick = l.nick || l.from || '?'
+      row.innerHTML = `<span class="nick" style="color:${nickColor(nick)}">${escapeHtml(nick)}</span>${escapeHtml(l.text)}`
       if (l.seq && (snap.clips || []).some((c) => c.seq === l.seq)) this._addReplay(row, l.seq)
       list.appendChild(row)
     }

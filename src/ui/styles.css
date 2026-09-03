@@ -1094,12 +1094,9 @@ body {
   content: ':';
 }
 
+/* The phone's own lines keep the accent; the speaker colour is set inline per name. */
 .side .lobby-lines .line.user .nick {
-  color: var(--accent);
-}
-
-.side .lobby-lines .line.self .nick {
-  color: var(--text);
+  color: var(--accent) !important;
 }
 
 .side .lobby-lines .line.addressed {
