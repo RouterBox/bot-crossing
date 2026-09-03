@@ -133,8 +133,9 @@ Do not put a file handle, a class instance, or a secret in it.
 Verified on a real machine:
 
 - **Claude Code** — desktop records in
-  `~/Library/Application Support/Claude/claude-code-sessions/<account>/<org>/local_*.json`;
-  CLI transcripts in `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`; live processes in
+  `~/Library/Application Support/Claude/claude-code-sessions/<account>/<org>/local_*.json`
+  (`%APPDATA%\Claude\claude-code-sessions\…` on Windows); CLI transcripts in
+  `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`; live processes in
   `~/.claude/sessions/*.json`. Implemented in `claude-code.mjs`.
 - **Codex CLI** — transcripts in `~/.codex/sessions/YYYY/MM/DD/rollout-<iso>-<uuid>.jsonl`,
   with records shaped `{ timestamp, type, payload }`, and what looks like an index at

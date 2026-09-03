@@ -20,8 +20,23 @@ import { exists, jsonLines, listDirs, listFiles, num, readHead } from '../lib/fs
 const execFileAsync = promisify(execFile)
 const HOME = os.homedir()
 
+/**
+ * Where the Claude desktop app keeps its data: Electron's `userData` for an app named
+ * "Claude", which lands somewhere different on each OS.
+ */
+function desktopDataDir() {
+  switch (process.platform) {
+    case 'win32':
+      return path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'Claude')
+    case 'linux':
+      return path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'), 'Claude')
+    default:
+      return path.join(HOME, 'Library', 'Application Support', 'Claude')
+  }
+}
+
 /** Where the Claude desktop app keeps one JSON record per thread. */
-const DESKTOP_SESSIONS = path.join(HOME, 'Library', 'Application Support', 'Claude', 'claude-code-sessions')
+const DESKTOP_SESSIONS = path.join(desktopDataDir(), 'claude-code-sessions')
 /** Where the CLI keeps the raw transcript: ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl */
 const CLI_PROJECTS = path.join(HOME, '.claude', 'projects')
 /** One file per live CLI process: {pid, sessionId, cwd, ...}. Stale files outlive their pid. */
@@ -83,12 +98,15 @@ function readTranscriptMeta(records) {
   return meta
 }
 
-/** `/repo/.claude/worktrees/feature-abc` -> project `/repo`, worktree `feature-abc`. */
+/**
+ * `/repo/.claude/worktrees/feature-abc` -> project `/repo`, worktree `feature-abc`.
+ * Either separator: on Windows the same cwd arrives as `C:\repo\.claude\worktrees\…`.
+ */
+const WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)/
 function splitWorktree(cwd) {
-  const marker = '/.claude/worktrees/'
-  const i = cwd.indexOf(marker)
-  if (i === -1) return { root: cwd, worktree: '' }
-  return { root: cwd.slice(0, i), worktree: cwd.slice(i + marker.length).split('/')[0] }
+  const m = WORKTREE.exec(cwd)
+  if (!m) return { root: cwd, worktree: '' }
+  return { root: cwd.slice(0, m.index), worktree: m[1] }
 }
 
 function projectOf(cwd, originCwd) {
@@ -97,8 +115,13 @@ function projectOf(cwd, originCwd) {
   return { projectPath, project: path.basename(projectPath) || projectPath || 'unknown', worktree }
 }
 
-/** Best-effort reverse of the `-Users-you-Some-Dir` encoding used for project folder names. */
+/**
+ * Best-effort reverse of the encoding used for project folder names: `-Users-you-Some-Dir`
+ * on macOS, `C--Users-you-Some-Dir` on Windows, where the drive's colon became a dash too.
+ */
 function decodeProjectDir(name) {
+  const drive = /^([A-Za-z])--(.*)$/.exec(name)
+  if (drive) return `${drive[1]}:\\${drive[2].replace(/-/g, '\\')}`
   return name.startsWith('-') ? '/' + name.slice(1).replace(/-/g, '/') : name
 }
 
@@ -417,22 +440,57 @@ async function appStartedAt() {
 
   let started = 0
   try {
-    const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,lstart=,command='], { maxBuffer: 8 * 1024 * 1024 })
-    for (const line of stdout.split('\n')) {
-      const m = line.match(/^\s*\d+\s+(\w{3} \w{3}\s+\d+ \d{2}:\d{2}:\d{2} \d{4})\s+(\/.*)$/)
-      if (!m) continue
-      const [, when, command] = m
-      // The main process only — helper processes carry a --type= flag.
-      if (!command.includes('/Claude.app/Contents/MacOS/Claude') || command.includes('--type=')) continue
-      const parsed = Date.parse(when)
-      if (!Number.isNaN(parsed)) started = parsed
-      break
-    }
+    started = process.platform === 'win32' ? await windowsAppStartedAt() : await darwinAppStartedAt()
   } catch {
-    /* ps unavailable — treat the app as never having restarted */
+    /* no process listing — treat the app as never having restarted */
   }
   appStartCache = { at: started, checkedAt: now }
   return started
+}
+
+async function darwinAppStartedAt() {
+  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,lstart=,command='], { maxBuffer: 8 * 1024 * 1024 })
+  for (const line of stdout.split('\n')) {
+    const m = line.match(/^\s*\d+\s+(\w{3} \w{3}\s+\d+ \d{2}:\d{2}:\d{2} \d{4})\s+(\/.*)$/)
+    if (!m) continue
+    const [, when, command] = m
+    // The main process only — helper processes carry a --type= flag.
+    if (!command.includes('/Claude.app/Contents/MacOS/Claude') || command.includes('--type=')) continue
+    const parsed = Date.parse(when)
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+  return 0
+}
+
+/**
+ * The same answer on Windows. There is no `ps`, and `tasklist` knows neither start times nor
+ * command lines, so this asks CIM, which knows both. The desktop app and the CLI are both
+ * `claude.exe` here, so the main process is picked out by shape rather than by path: the one
+ * with no `--type=` flag whose children (the helpers, which all carry one) point back at it.
+ * A PowerShell round trip is a few hundred milliseconds, which the 15s cache above absorbs.
+ */
+async function windowsAppStartedAt() {
+  const script = [
+    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | ForEach-Object {",
+    "  if ($_.CreationDate) { '{0}|{1}|{2}|{3}' -f $_.ProcessId, $_.ParentProcessId,",
+    "    $_.CreationDate.ToUniversalTime().ToString('o'), $_.CommandLine } }",
+  ].join(' ')
+  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    maxBuffer: 8 * 1024 * 1024,
+  })
+  const rows = stdout
+    .split(/\r?\n/)
+    .map((line) => line.split('|'))
+    .filter((parts) => parts.length >= 4)
+    .map(([pid, ppid, when, ...command]) => ({
+      pid,
+      ppid,
+      when: Date.parse(when),
+      command: command.join('|'),
+    }))
+  const helperParents = new Set(rows.filter((r) => r.command.includes('--type=')).map((r) => r.ppid))
+  const main = rows.find((r) => helperParents.has(r.pid) && !r.command.includes('--type='))
+  return main && !Number.isNaN(main.when) ? main.when : 0
 }
 
 export default {

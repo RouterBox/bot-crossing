@@ -27,7 +27,9 @@
     "node": ">=20"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "win32",
+    "linux"
   ],
   "scripts": {
     "dev": "npm run assets --silent && vite",
