@@ -204,6 +204,39 @@ export async function snapshot(since = 0) {
   }
 }
 
+/**
+ * The tower can open a new Claude Code session in a terminal on the PC's screen: a folder
+ * under C:/github, a name, and it binds itself to the phone and the town on start. The
+ * town only relays; the tower validates the folder, refuses a name already in use, and
+ * decides what the session is allowed to do. A tower without the route reports the button
+ * unavailable rather than failing on the click.
+ */
+export async function spawnDirs() {
+  try {
+    const res = await fetch(`${TOWER}/spawn/dirs`, { signal: AbortSignal.timeout(3000) })
+    if (!res.ok) return { available: false, dirs: [] }
+    const body = await res.json()
+    return { available: true, dirs: body.dirs || body || [] }
+  } catch {
+    return { available: false, dirs: [] }
+  }
+}
+
+export async function spawn({ dir, name, nick, voiceId, bypass }) {
+  const cleanName = String(name || '').trim().toLowerCase()
+  if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(cleanName)) return { ok: false, error: 'Name must be kebab-case: letters, digits, dashes' }
+  if (typeof dir !== 'string' || !dir) return { ok: false, error: 'Pick a folder' }
+  const res = await fetch(`${TOWER}/spawn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dir, name: cleanName, nick: nick ? String(nick).trim() : undefined, voiceId: voiceId || undefined, bypass: bypass !== false }),
+    signal: AbortSignal.timeout(15000),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) return { ok: false, error: body.error || `tower said ${res.status}` }
+  return { ok: true, ...body }
+}
+
 /** Stream one clip through from the tower, so the page never talks to it directly. */
 export async function clip(seq) {
   const n = Number(seq)

@@ -12,7 +12,7 @@ import {
   scanThreads,
   setThreadArchived,
 } from './scan.mjs'
-import { clip as lobbyClip, say as lobbySay, snapshot as lobbySnapshot } from './tower.mjs'
+import { clip as lobbyClip, say as lobbySay, snapshot as lobbySnapshot, spawn as towerSpawn, spawnDirs } from './tower.mjs'
 
 const execFileAsync = promisify(execFile)
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -303,6 +303,17 @@ export async function apiMiddleware(req, res, next) {
       if (!found) return send(res, 404, { error: 'No clip for that line' })
       res.writeHead(200, { 'Content-Type': found.type, 'Content-Length': found.body.length, 'Cache-Control': 'private, max-age=3600' })
       return res.end(found.body)
+    }
+
+    // Spawning a session on the PC's screen, through the tower. A human click on this page
+    // only: the Origin check above already refuses anything else.
+    if (url.pathname === '/api/spawn/dirs' && req.method === 'GET') {
+      return send(res, 200, await spawnDirs())
+    }
+
+    if (url.pathname === '/api/spawn' && req.method === 'POST') {
+      const result = await towerSpawn(await readJsonBody(req))
+      return send(res, result.ok ? 200 : 400, result)
     }
 
     if (url.pathname === '/api/lobby' && req.method === 'POST') {

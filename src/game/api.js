@@ -43,3 +43,8 @@ export const revealFolder = (folder) => post('/api/reveal', { folder })
 export const fetchLobby = (since = 0) => req(`/api/lobby?since=${since}`)
 
 export const sayLobby = (text) => post('/api/lobby', { text })
+
+/** Whether the tower can open a terminal session on the PC, and which folders it offers. */
+export const fetchSpawnDirs = () => req('/api/spawn/dirs')
+
+export const spawnSession = (body) => post('/api/spawn', body)

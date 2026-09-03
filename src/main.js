@@ -19,6 +19,8 @@ import {
   revealFolder,
   fetchLobby,
   sayLobby,
+  fetchSpawnDirs,
+  spawnSession,
 } from './game/api.js'
 
 /**
@@ -281,6 +283,30 @@ const actions = {
   },
 
   uiVisibility: (visible) => colony.setUiVisible(visible),
+
+  /**
+   * A new Claude Code session in a terminal on the PC's screen, in this repo's folder,
+   * bound to the phone and the town from its first second. The tower does the opening;
+   * the town hands it the folder it already knows and the name you typed.
+   */
+  spawnHere: async ({ name, nick, bypass }) => {
+    const project = selectedProject
+    const folder = project && pathForProject(project)
+    if (!folder) {
+      hud.toast('No folder on disk for that project', 'err')
+      return false
+    }
+    try {
+      const res = await spawnSession({ dir: folder, name, nick, bypass })
+      hud.toast(`Opened ${name} in a terminal — it will bind to the phone in a moment`)
+      setTimeout(pollLobby, 4000)
+      setTimeout(poll, 8000)
+      return res
+    } catch (err) {
+      hud.toast(err.message || 'The tower could not open that session', 'err')
+      return false
+    }
+  },
 
   /** Off → latest → all → off. The setting is what the town remembers between visits. */
   cycleLobbyAudio: () => {
@@ -773,6 +799,10 @@ async function boot() {
   setInterval(poll, POLL_MS)
   pollLobby()
   setInterval(pollLobby, LOBBY_POLL_MS)
+  // Whether the tower can open terminal sessions decides if the repo panel offers it.
+  fetchSpawnDirs()
+    .then((r) => hud.setSpawnAvailable(Boolean(r.available)))
+    .catch(() => hud.setSpawnAvailable(false))
   window.addEventListener('focus', poll)
   // A tab that was hidden for an hour should catch up the moment it comes back.
   document.addEventListener('visibilitychange', () => {

@@ -370,6 +370,20 @@ export class Hud {
     on('#btn-locate', 'click', () => this.actions.focusProject?.(this.project?.name))
     on('#btn-close-project', 'click', () => this.actions.closeProject?.())
     on('#btn-lobby-audio', 'click', () => this.actions.cycleLobbyAudio?.())
+    on('#btn-spawn', 'click', () => this.toggleSpawn())
+    on('#btn-spawn-cancel', 'click', () => this.toggleSpawn(false))
+    on('.spawn-form', 'submit', async (e) => {
+      e.preventDefault()
+      const name = this.$('#spawn-name').value.trim().toLowerCase()
+      const nick = this.$('#spawn-nick').value.trim()
+      const bypass = this.$('#spawn-bypass').checked
+      if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(name)) {
+        this.toast('Name must be kebab-case: letters, digits, dashes', 'err')
+        return
+      }
+      const ok = await this.actions.spawnHere?.({ name, nick, bypass })
+      if (ok) this.toggleSpawn(false)
+    })
     on('.lobby-say', 'submit', (e) => {
       e.preventDefault()
       const input = this.$('.lobby-say input')
@@ -471,6 +485,30 @@ export class Hud {
     const shown = projects.length - hidden
     this.$('.sec-head span').textContent =
       `${shown} repo${shown === 1 ? '' : 's'}` + (hidden ? ` · ${hidden} hidden` : '')
+  }
+
+  /** The tower can (or cannot) open terminal sessions; the button follows. */
+  setSpawnAvailable(on) {
+    this.spawnAvailable = Boolean(on)
+    this.$('#btn-spawn').hidden = !this.spawnAvailable
+    if (!this.spawnAvailable) this.toggleSpawn(false)
+  }
+
+  /** The little form under the repo actions: a name, a nick, and the permission switch. */
+  toggleSpawn(force) {
+    const form = this.$('.spawn-form')
+    const open = force ?? form.hidden
+    form.hidden = !open
+    this.$('#btn-spawn').setAttribute('aria-pressed', String(open))
+    if (open) {
+      const repo = (this.project?.name || 'session').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      const name = this.$('#spawn-name')
+      if (!name.value) name.value = repo
+      const nick = this.$('#spawn-nick')
+      if (!nick.value) nick.value = this.project?.name || ''
+      name.focus()
+      name.select()
+    }
   }
 
   /** Which sessions the phone can see, by session id — drawn as a mark on their rows. */
@@ -604,6 +642,7 @@ export class Hud {
     path.title = project.path || ''
     // Nothing to open a new thread in, and nothing to reveal, without a folder on disk.
     this.$('#btn-new-session').disabled = !project.path
+    this.$('#btn-spawn').disabled = !project.path
     this.$('#btn-reveal').disabled = !project.path
     this.$('#btn-copy-path').disabled = !project.path
 
@@ -1026,6 +1065,16 @@ const TEMPLATE = `
       </div>
       <div class="project-actions">
         <button class="btn primary" id="btn-new-session" title="Start a new thread in this folder (C)">${ICON.plus} New conversation</button>
+        <button class="btn" id="btn-spawn" title="Open a terminal session in this folder on the PC, bound to the phone" aria-pressed="false" hidden>${ICON.open} New terminal session</button>
+        <form class="spawn-form" hidden>
+          <label>Name <input id="spawn-name" type="text" placeholder="kebab-case" autocomplete="off" spellcheck="false" maxlength="40"></label>
+          <label>Nick <input id="spawn-nick" type="text" placeholder="how it appears in the room" autocomplete="off" spellcheck="false" maxlength="40"></label>
+          <label class="check"><input id="spawn-bypass" type="checkbox" checked> Skip permission prompts</label>
+          <div class="pair">
+            <button type="submit" class="btn primary">Open</button>
+            <button type="button" class="btn" id="btn-spawn-cancel">Cancel</button>
+          </div>
+        </form>
         <div class="pair">
           <button class="btn" id="btn-reveal" title="Show this folder in ${FILE_MANAGER}">${ICON.folder} ${FILE_MANAGER}</button>
           <button class="btn" id="btn-copy-path" title="Copy the folder path">${ICON.copy} Copy path</button>
