@@ -1203,6 +1203,47 @@ body {
   color: #7fd39a;
 }
 
+.side .spawn-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.side .spawn-form label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.side .spawn-form label input[type='text'] {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+  pointer-events: auto;
+}
+
+.side .spawn-form label.check {
+  color: var(--muted);
+}
+
+.side .spawn-form label.check input {
+  pointer-events: auto;
+}
+
 .side .lobby .who.robot {
   cursor: pointer;
 }
