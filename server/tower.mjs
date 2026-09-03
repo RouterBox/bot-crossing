@@ -75,17 +75,23 @@ function remember(line) {
  */
 function fromTranscript(l) {
   const text = String(l.text || '')
-  const cut = text.indexOf(': ')
-  const nick = cut > 0 && cut < 40 ? text.slice(0, cut) : ''
-  const body = nick ? text.slice(cut + 2) : text
+  // Newer lines say who spoke in `nick` and `from`; older ones baked `Nick: ` into the text.
+  let nick = String(l.nick || '')
+  let body = text
+  if (!nick) {
+    const cut = text.indexOf(': ')
+    nick = cut > 0 && cut < 40 ? text.slice(0, cut) : ''
+    body = nick ? text.slice(cut + 2) : text
+  }
+  const from = l.from || (l.role === 'user' ? 'user' : '')
   return {
     seq: l.seq,
     at: l.at,
-    from: l.role === 'user' ? 'user' : '',
+    from,
     nick: nick || (l.role === 'user' ? 'Phone' : 'Tower'),
     text: body,
     addressed: /@(town|bot-crossing|everyone)\b/i.test(body),
-    self: nick === NICK,
+    self: from === NAME || nick === NICK,
   }
 }
 
