@@ -25,6 +25,11 @@
  *     "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "node C:/github/bot-crossing/tools/tower-hooks.mjs remove" }] }]
  *   }
  *
+ * SessionStart also fires when a session resumes or compacts its context, and a session may
+ * already be on the tower under a name it chose itself (`/jaina-control`). Registering again
+ * would put the same session on the phone twice, so the hook first asks the tower whether
+ * any context already carries this session id and stays quiet if one does.
+ *
  * A hook must never break a session: every failure here is swallowed, and the tower being
  * down is the normal case on a machine where it is not running.
  */
@@ -69,6 +74,24 @@ async function readStdin() {
     return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
   } catch {
     return {}
+  }
+}
+
+/**
+ * The name of the context already registered for this session, if any. A tower that cannot
+ * be reached or answers oddly counts as "none": the register that follows is then the same
+ * best effort it always was.
+ */
+async function existingContextFor(sessionId) {
+  if (!sessionId) return undefined
+  try {
+    const res = await fetch(TOWER + '/contexts', { signal: AbortSignal.timeout(3000) })
+    if (!res.ok) return undefined
+    const data = await res.json()
+    const list = Array.isArray(data) ? data : Array.isArray(data?.contexts) ? data.contexts : []
+    return list.find((c) => c && c.sessionId === sessionId)?.name
+  } catch {
+    return undefined
   }
 }
 
@@ -117,6 +140,7 @@ async function main() {
   const hook = await readStdin()
   const ctx = contextFor(hook)
   if (action === 'register') {
+    if (await existingContextFor(ctx.sessionId)) return
     await post('/session/register', {
       name: ctx.name,
       nick: ctx.nick,
