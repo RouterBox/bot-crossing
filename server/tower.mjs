@@ -226,10 +226,12 @@ export async function spawn({ dir, name, nick, voiceId, bypass }) {
   const cleanName = String(name || '').trim().toLowerCase()
   if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(cleanName)) return { ok: false, error: 'Name must be kebab-case: letters, digits, dashes' }
   if (typeof dir !== 'string' || !dir) return { ok: false, error: 'Pick a folder' }
+  // The tower takes the folder's name under its root, not a path; the town has the path.
+  const folder = dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop()
   const res = await fetch(`${TOWER}/spawn`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dir, name: cleanName, nick: nick ? String(nick).trim() : undefined, voiceId: voiceId || undefined, bypass: bypass !== false }),
+    body: JSON.stringify({ dir: folder, name: cleanName, nick: nick ? String(nick).trim() : undefined, voiceId: voiceId || undefined, bypass: bypass !== false }),
     signal: AbortSignal.timeout(15000),
   })
   const body = await res.json().catch(() => ({}))
