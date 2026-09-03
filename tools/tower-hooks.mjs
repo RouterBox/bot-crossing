@@ -99,6 +99,20 @@ function contextFor(hook) {
   return { name: `${repo}-${id.slice(0, 6) || 'unknown'}`, nick: repo, sessionId: id, cwd, kind: 'auto' }
 }
 
+/**
+ * The sessions file can land a beat after SessionStart fires, so the lookup is tried a few
+ * times over about two seconds before giving up. A session start pays that wait only when
+ * the file is genuinely late; usually the first try finds it.
+ */
+async function claudePidSoon(sessionId) {
+  for (let i = 0; i < 8; i++) {
+    const pid = claudePidFor(sessionId)
+    if (pid) return pid
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return undefined
+}
+
 async function main() {
   const hook = await readStdin()
   const ctx = contextFor(hook)
@@ -109,7 +123,7 @@ async function main() {
       description: `Claude Code session in ${ctx.cwd}`,
       sessionId: ctx.sessionId,
       cwd: ctx.cwd,
-      pid: claudePidFor(ctx.sessionId),
+      pid: await claudePidSoon(ctx.sessionId),
       kind: ctx.kind,
     })
   } else if (action === 'remove') {
