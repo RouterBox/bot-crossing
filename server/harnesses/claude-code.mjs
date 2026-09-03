@@ -99,20 +99,31 @@ function readTranscriptMeta(records) {
 }
 
 /**
- * `/repo/.claude/worktrees/feature-abc` -> project `/repo`, worktree `feature-abc`.
- * Either separator: on Windows the same cwd arrives as `C:\repo\.claude\worktrees\…`.
+ * Where a cwd is a worktree, which repo it belongs to and what the worktree is called.
+ *
+ *   - `<repo>/.claude/worktrees/<name>` — the original layout; the repo is everything
+ *     before the marker.
+ *   - `~/.claude-worktrees/<repo>/<name>` — where Claude Code puts them now. The checkout is
+ *     not next to it, so the path only gives the repo's *name*; the desktop record carries
+ *     the real path in `originCwd`, which `projectOf` prefers anyway. Without this, every
+ *     terminal-started thread in such a worktree claimed a zone named after the worktree.
+ *
+ * Either separator: on Windows the same cwd arrives with backslashes.
  */
-const WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)/
+const CLAUDE_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)/
+const HOME_WORKTREE = /[\\/]\.claude-worktrees[\\/]([^\\/]+)[\\/]([^\\/]+)/
 function splitWorktree(cwd) {
-  const m = WORKTREE.exec(cwd)
-  if (!m) return { root: cwd, worktree: '' }
-  return { root: cwd.slice(0, m.index), worktree: m[1] }
+  let m = CLAUDE_WORKTREE.exec(cwd)
+  if (m) return { root: cwd.slice(0, m.index), name: '', worktree: m[1] }
+  m = HOME_WORKTREE.exec(cwd)
+  if (m) return { root: '', name: m[1], worktree: m[2] }
+  return { root: cwd, name: '', worktree: '' }
 }
 
 function projectOf(cwd, originCwd) {
-  const { root, worktree } = splitWorktree(cwd || '')
+  const { root, name, worktree } = splitWorktree(cwd || '')
   const projectPath = originCwd || root || cwd || ''
-  return { projectPath, project: path.basename(projectPath) || projectPath || 'unknown', worktree }
+  return { projectPath, project: name || path.basename(projectPath) || projectPath || 'unknown', worktree }
 }
 
 /**
