@@ -78,19 +78,40 @@ async function writeState(next) {
   return state
 }
 
-/** Hand a `harness://…` deep link to the OS. `open` gets an argument list, never a shell string. */
-function launch(url) {
-  const child = spawn('open', [url], { stdio: 'ignore', detached: true })
+/**
+ * Hand a `harness://…` deep link, or a folder, to whatever opens things on this OS. The
+ * opener gets an argument list, never a shell string.
+ *
+ * macOS's `open(1)` does both jobs. On Windows the equivalent is ShellExecute, reached
+ * through `rundll32 url.dll,FileProtocolHandler`: a registered protocol URL goes to its app
+ * and a folder opens in Explorer, with the argument passed through untouched. Two more
+ * obvious routes were tried and rejected — `explorer.exe <url>` silently drops any URL that
+ * carries a query string, so `code/new?folder=…` never arrived, and `cmd /c start` parses
+ * its own argument line, where the `%3A%5C` escapes in that same link are exactly what it
+ * expands. `xdg-open` is the Linux equivalent; nobody has verified it yet.
+ */
+const OPENERS = {
+  darwin: ['open'],
+  win32: ['rundll32', 'url.dll,FileProtocolHandler'],
+  linux: ['xdg-open'],
+}
+
+function launch(target) {
+  const opener = OPENERS[process.platform]
+  if (!opener) throw new Error(`No opener for ${process.platform}`)
+  const [cmd, ...args] = opener
+  const child = spawn(cmd, [...args, target], { stdio: 'ignore', detached: true })
   child.unref()
 }
 
 /**
  * A folder is openable only if it is still on this machine and still a directory. Paths
  * arrive from the page, which got them from a scan that may be minutes old — a repo that
- * has since been moved or deleted must fail here rather than hand `open` a dead path.
+ * has since been moved or deleted must fail here rather than hand the opener a dead path.
+ * Absolute is judged by `path.isAbsolute` rather than a leading `/`, which no Windows path has.
  */
 async function resolveFolder(folder) {
-  if (typeof folder !== 'string' || !folder.startsWith('/')) return null
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) return null
   const dir = path.resolve(folder)
   const stat = await fsp.stat(dir).catch(() => null)
   return stat && stat.isDirectory() ? dir : null
