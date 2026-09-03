@@ -82,11 +82,21 @@ async function post(route, body) {
   return res.ok
 }
 
+/**
+ * A session somebody launched on purpose — the tower spawning one into a chosen folder
+ * with a chosen name — says so in its environment, and the hook registers it under that
+ * name rather than inventing one. Otherwise `/jaina-control <name>` inside the session
+ * would register a second context for the same session id.
+ */
 function contextFor(hook) {
   const id = String(hook.session_id || '')
   const cwd = String(hook.cwd || process.cwd())
   const repo = path.basename(cwd) || 'session'
-  return { name: `${repo}-${id.slice(0, 6) || 'unknown'}`, nick: repo, sessionId: id, cwd }
+  const chosen = String(process.env.DROID_CONTEXT_NAME || '').trim()
+  if (chosen) {
+    return { name: chosen, nick: String(process.env.DROID_CONTEXT_NICK || chosen).trim(), sessionId: id, cwd, kind: 'spawned' }
+  }
+  return { name: `${repo}-${id.slice(0, 6) || 'unknown'}`, nick: repo, sessionId: id, cwd, kind: 'auto' }
 }
 
 async function main() {
@@ -100,7 +110,7 @@ async function main() {
       sessionId: ctx.sessionId,
       cwd: ctx.cwd,
       pid: claudePidFor(ctx.sessionId),
-      kind: 'auto',
+      kind: ctx.kind,
     })
   } else if (action === 'remove') {
     // Remove, not unregister: unregister leaves the thread on the phone routed to RCL, and
