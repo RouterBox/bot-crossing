@@ -1,4 +1,5 @@
 import fsp from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -79,16 +80,22 @@ async function writeState(next) {
 }
 
 /**
+/**
  * Hand a `harness://…` deep link, or a folder, to whatever opens things on this OS. The
  * opener gets an argument list, never a shell string.
  *
- * macOS's `open(1)` does both jobs. On Windows the equivalent is ShellExecute, reached
- * through `rundll32 url.dll,FileProtocolHandler`: a registered protocol URL goes to its app
- * and a folder opens in Explorer, with the argument passed through untouched. Two more
- * obvious routes were tried and rejected — `explorer.exe <url>` silently drops any URL that
- * carries a query string, so `code/new?folder=…` never arrived, and `cmd /c start` parses
- * its own argument line, where the `%3A%5C` escapes in that same link are exactly what it
- * expands. `xdg-open` is the Linux equivalent; nobody has verified it yet.
+ * macOS's `open(1)` does both jobs, and `xdg-open` is the Linux equivalent. On Windows the
+ * equivalent is ShellExecute, reached through `rundll32 url.dll,FileProtocolHandler`: a
+ * registered protocol URL goes to its app and a folder opens in Explorer, with the argument
+ * passed through untouched. Two more obvious routes were tried and rejected — `explorer.exe
+ * <url>` silently drops any URL that carries a query string, so `code/new?folder=…` never
+ * arrived, and `cmd /c start` parses its own argument line, where the `%3A%5C` escapes in that
+ * same link are exactly what it expands.
+ *
+ * The spawn is guarded because the opener may simply not be installed — a headless Linux box
+ * has no `xdg-open` — and an unhandled `error` event on a child process takes the whole server
+ * down. Failing quietly is right here: there is nothing the page could do with the error, and
+ * the scan path must never depend on whether presentation worked.
  */
 const OPENERS = {
   darwin: ['open'],
@@ -98,9 +105,10 @@ const OPENERS = {
 
 function launch(target) {
   const opener = OPENERS[process.platform]
-  if (!opener) throw new Error(`No opener for ${process.platform}`)
+  if (!opener) return
   const [cmd, ...args] = opener
   const child = spawn(cmd, [...args, target], { stdio: 'ignore', detached: true })
+  child.on('error', () => {})
   child.unref()
 }
 
@@ -159,6 +167,16 @@ function send(res, status, body) {
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
+
+// The machine's own LAN addresses count as local too, so the colony can be
+// served to the home network with BOT_CROSSING_HOST set. Harmless when bound
+// to loopback (those hosts can't reach the server anyway), and the Host +
+// Origin pairing still stops DNS rebinding and CSRF exactly as before.
+for (const addrs of Object.values(os.networkInterfaces())) {
+  for (const a of addrs || []) {
+    if (a && a.family === 'IPv4' && !a.internal && a.address) LOCAL_HOSTS.add(a.address)
+  }
+}
 
 /** Hostname out of a `Host:` or `Origin:` value, with the port and any brackets stripped. */
 function hostnameOf(value) {
