@@ -1135,6 +1135,34 @@ body {
   opacity: 0.5;
 }
 
+.side .lobby .who.robot {
+  cursor: pointer;
+}
+
+.side .lobby .who.robot:hover {
+  border-color: var(--line-strong);
+}
+
+/* A session the phone can see: a small light after its title, lit while someone listens. */
+.side .thread .tw {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 7px;
+  border-radius: 2px;
+  background: var(--dim);
+  vertical-align: 1px;
+}
+
+.side .thread .tw.live {
+  background: #7fd39a;
+  box-shadow: 0 0 5px #7fd39a;
+}
+
+.thread-pop .tag.tower.live {
+  color: #7fd39a;
+}
+
 .side .filter {
   margin: 0 9px 6px;
   padding: 7px 10px;
