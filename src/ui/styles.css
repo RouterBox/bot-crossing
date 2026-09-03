@@ -1016,6 +1016,125 @@ body {
   font-size: 11.5px;
 }
 
+/* The tower's room, under the repo list. It takes a fixed share so the repos keep theirs. */
+.side .lobby {
+  flex: none;
+  height: 40%;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+
+.side .lobby.off .lobby-lines,
+.side .lobby.off .roster {
+  opacity: 0.5;
+}
+
+.side .lobby .roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 12px 6px;
+  flex: none;
+}
+
+.side .lobby .who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.side .lobby .who i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+
+.side .lobby .who.live {
+  color: var(--text);
+}
+
+.side .lobby .who.live i {
+  background: #7fd39a;
+  box-shadow: 0 0 6px #7fd39a;
+}
+
+.side .lobby-lines {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 12px 6px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.side .lobby-lines .line {
+  padding: 3px 6px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.side .lobby-lines .line .nick {
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.side .lobby-lines .line .nick::after {
+  content: ':';
+}
+
+.side .lobby-lines .line.user .nick {
+  color: var(--accent);
+}
+
+.side .lobby-lines .line.self .nick {
+  color: var(--text);
+}
+
+.side .lobby-lines .line.addressed {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.side .lobby-say {
+  display: flex;
+  gap: 6px;
+  padding: 6px 9px 10px;
+  flex: none;
+}
+
+.side .lobby-say input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+  pointer-events: auto;
+}
+
+.side .lobby-say input:focus {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.side .lobby-say input:disabled {
+  opacity: 0.5;
+}
+
 .side .filter {
   margin: 0 9px 6px;
   padding: 7px 10px;

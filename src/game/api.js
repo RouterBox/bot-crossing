@@ -38,3 +38,8 @@ export const archiveThread = (thread, archived) =>
 export const newSession = (folder, harness) => post('/api/new-session', { folder, harness })
 
 export const revealFolder = (folder) => post('/api/reveal', { folder })
+
+/** The tower's lobby: room lines newer than `since`, and who is on the tower right now. */
+export const fetchLobby = (since = 0) => req(`/api/lobby?since=${since}`)
+
+export const sayLobby = (text) => post('/api/lobby', { text })

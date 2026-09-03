@@ -358,6 +358,14 @@ export class Hud {
     on('#btn-copy-path', 'click', () => this.actions.copyProjectPath?.())
     on('#btn-locate', 'click', () => this.actions.focusProject?.(this.project?.name))
     on('#btn-close-project', 'click', () => this.actions.closeProject?.())
+    on('.lobby-say', 'submit', (e) => {
+      e.preventDefault()
+      const input = this.$('.lobby-say input')
+      const text = input.value.trim()
+      if (!text) return
+      input.value = ''
+      this.actions.sayLobby?.(text)
+    })
     // Typing in the box narrows the repo's session list; the list is re-rendered from the
     // last project the page handed over, so it does not have to wait for the next poll.
     this.threadFilter = ''
@@ -438,6 +446,55 @@ export class Hud {
     const shown = projects.length - hidden
     this.$('.sec-head span').textContent =
       `${shown} repo${shown === 1 ? '' : 's'}` + (hidden ? ` · ${hidden} hidden` : '')
+  }
+
+  /**
+   * The tower's room and roster, under the repo list. Lines are appended rather than
+   * redrawn, so the scroll position survives a poll; the roster is redrawn only when who is
+   * on the tower, or their liveness, actually changed.
+   */
+  setLobby(snap) {
+    const pane = this.$('.lobby')
+    const available = Boolean(snap?.available)
+    const stateEl = this.$('.lobby-state')
+    const stateText = available ? `${(snap.roster || []).filter((r) => r.state === 'live').length} live` : snap?.error ? 'tower offline' : 'connecting…'
+    if (this._last.lobbyState !== stateText) {
+      this._last.lobbyState = stateText
+      stateEl.textContent = stateText
+      pane.classList.toggle('off', !available)
+      this.$('.lobby-say input').disabled = !available
+    }
+
+    const roster = snap?.roster || []
+    const rosterSig = roster.map((r) => `${r.name}:${r.nick}:${r.state}`).join('|')
+    if (this._last.roster !== rosterSig) {
+      this._last.roster = rosterSig
+      const wrap = this.$('.lobby .roster')
+      wrap.innerHTML = ''
+      for (const r of roster) {
+        const chip = document.createElement('span')
+        chip.className = `who ${r.state === 'live' ? 'live' : 'idle'}`
+        chip.title = `${r.name} · ${r.state}`
+        chip.innerHTML = `<i></i>${escapeHtml(r.nick)}`
+        wrap.appendChild(chip)
+      }
+    }
+
+    const list = this.$('.lobby-lines')
+    const lines = snap?.lines || []
+    if (!lines.length) return
+    // Stick to the bottom only if the reader was already there; a scrolled-up reader is
+    // reading something and must not be yanked to the newest line.
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24
+    for (const l of lines) {
+      const row = document.createElement('div')
+      row.className = `line${l.from === 'user' ? ' user' : ''}${l.self ? ' self' : ''}${l.addressed ? ' addressed' : ''}`
+      row.title = l.at ? new Date(l.at).toLocaleTimeString() : ''
+      row.innerHTML = `<span class="nick">${escapeHtml(l.nick || l.from || '?')}</span>${escapeHtml(l.text)}`
+      list.appendChild(row)
+    }
+    while (list.children.length > 200) list.removeChild(list.firstChild)
+    if (atBottom) list.scrollTop = list.scrollHeight
   }
 
   /**
@@ -879,6 +936,15 @@ const TEMPLATE = `
     <div class="projects-pane">
       <div class="sec-head"><span>Repos</span></div>
       <div class="projects"></div>
+      <div class="lobby off">
+        <div class="sec-head"><span>Lobby</span><span class="lobby-state">connecting…</span></div>
+        <div class="roster"></div>
+        <div class="lobby-lines"></div>
+        <form class="lobby-say">
+          <input type="text" placeholder="Say something to the room…" autocomplete="off" spellcheck="false" disabled>
+          <button type="submit" class="btn">Send</button>
+        </form>
+      </div>
     </div>
 
     <div class="project-detail">
