@@ -28,10 +28,39 @@
  * A hook must never break a session: every failure here is swallowed, and the tower being
  * down is the normal case on a machine where it is not running.
  */
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 const TOWER = process.env.BOT_CROSSING_TOWER || 'http://127.0.0.1:3014'
 const action = process.argv[2]
+
+/**
+ * The pid of the Claude Code process itself — not `process.ppid`, which is the throwaway
+ * shell the hook runs under and is dead before the tower looks at it (the tower prunes a
+ * context whose pid has gone, which is exactly what we want it to do to real sessions).
+ * Claude Code registers every live process in `~/.claude/sessions/<pid>.json` with its
+ * session id, so the pid is looked up by that. Unknown means unknown: no pid is sent.
+ */
+function claudePidFor(sessionId) {
+  if (!sessionId) return undefined
+  const dir = path.join(os.homedir(), '.claude', 'sessions')
+  let names = []
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'))
+  } catch {
+    return undefined
+  }
+  for (const name of names) {
+    try {
+      const rec = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'))
+      if (rec.sessionId === sessionId && Number.isInteger(rec.pid)) return rec.pid
+    } catch {
+      /* a record mid-write; skip it */
+    }
+  }
+  return undefined
+}
 
 async function readStdin() {
   const chunks = []
@@ -70,7 +99,7 @@ async function main() {
       description: `Claude Code session in ${ctx.cwd}`,
       sessionId: ctx.sessionId,
       cwd: ctx.cwd,
-      pid: process.ppid,
+      pid: claudePidFor(ctx.sessionId),
       kind: 'auto',
     })
   } else if (action === 'remove') {
