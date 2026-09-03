@@ -18,6 +18,7 @@ import { Astronauts } from '../agents/astronauts.js'
 import { Indicators, BADGE } from '../agents/indicators.js'
 import { Particles } from '../agents/particles.js'
 import { Navigation } from '../agents/navigation.js'
+import { FACE } from '../agents/faces.js'
 
 /**
  * The colony: everything that turns a list of agent threads into a place.
@@ -33,9 +34,15 @@ import { Navigation } from '../agents/navigation.js'
  *   long idle      → asleep on the job
  *   anything else  → pottering about its plot
  *
- * Threads group by repo, one repo per hex plot, and every thread gets a building seeded
- * from its own session id — so the colony's skyline is a stable, readable picture of what
- * you have running.
+ * Threads group by repo, one repo per hex plot. Each repo has *one* building, seeded from
+ * its name and sized by how much has been committed there, and its sessions are the crew
+ * that live in it. Only the crew that has done something recently stands outside; the rest
+ * are indoors — still sessions, still listed on the repo, just not bodies on the ground.
+ *
+ * This is a departure from the original mapping, where every session raised its own
+ * building. That reads beautifully for a couple of dozen hand-driven threads and collapses
+ * under a machine that runs thousands of short ones: the skyline became the noise, and the
+ * one `?` that mattered was lost in it.
  */
 
 const STALE_MS = 3 * 24 * 60 * 60 * 1000
@@ -55,8 +62,18 @@ export const STATUS_LABEL = {
   celebrating: 'Shipped',
   idle: 'Idle',
   sleeping: 'Dormant',
+  indoors: 'Inside',
   spawning: 'Arriving',
   leaving: 'Heading home',
+}
+
+/**
+ * How big a repo's building is, from its commit count. Log scale, like the old transcript
+ * measure: the first hundred commits do most of the growing, so a young repo is not a shed
+ * and a ten-thousand-commit one is not a skyscraper that shades the whole colony.
+ */
+export function buildingScale(commits) {
+  return 0.85 + 0.35 * Math.log10(1 + Math.max(0, commits || 0))
 }
 
 /** Thread → behaviour. First match wins, exactly like the board's auto-sort. */
@@ -254,26 +271,36 @@ export class Colony {
 
   /**
    * Take a fresh scan and reshape the colony around it. Everything here is keyed by stable
-   * ids — repo name for plots, session id for buildings — so a poll that changes nothing
-   * moves nothing on screen.
+   * ids — repo name for plots and buildings, session id for crew — so a poll that changes
+   * nothing moves nothing on screen.
+   *
+   * `hidden` is the set of repos switched off in the sidebar: no plot, no building, no crew,
+   * not in the counts. `repos` is the server's commit count per repo path, and `cutoffMs`
+   * is how long a session may sit idle before it goes indoors.
    */
-  setThreads(threads, archivedIds = new Set()) {
+  setThreads(threads, archivedIds = new Set(), { hidden = new Set(), repos = {}, cutoffMs = Infinity } = {}) {
     const now = Date.now()
-    const live = threads.filter((t) => !t.archived && !archivedIds.has(t.id))
+    const live = threads.filter(
+      (t) => !t.archived && !archivedIds.has(t.id) && !hidden.has(t.project || 'unknown')
+    )
+    // Who stands outside: anything running now, or that did something within the cutoff.
+    const outside = (t) => t.running || now - t.lastActivityAt <= cutoffMs
 
-    // Group by repo, biggest project first so the busiest work lands nearest the middle.
+    // Group by repo. The plot is sized by the crowd *outside* — that is what needs ground —
+    // biggest first so the busiest work lands nearest the middle.
     const byProject = new Map()
     for (const thread of live) {
       const key = thread.project || 'unknown'
       if (!byProject.has(key)) byProject.set(key, [])
       byProject.get(key).push(thread)
     }
+    const crowd = (list) => list.filter(outside).length
     const projects = [...byProject.entries()].sort((a, b) => {
-      if (b[1].length !== a[1].length) return b[1].length - a[1].length
+      if (crowd(b[1]) !== crowd(a[1])) return crowd(b[1]) - crowd(a[1])
       return a[0].localeCompare(b[0])
     })
 
-    this._syncPlots(projects)
+    this._syncPlots(projects.map(([name, list]) => [name, list.filter(outside)]))
 
     const roster = []
     const seenBuildings = new Set()
@@ -285,48 +312,85 @@ export class Colony {
     // Plots with anyone working, waiting or stuck keep their name on screen; quiet ones
     // only show it on hover.
     const active = new Set()
+    const indoors = new Set()
 
     for (const [name, list] of projects) {
       const plot = this.plots.get(name)
       if (!plot) continue
-      // Oldest thread first, so a given session keeps its slot as siblings come and go.
-      list.sort((a, b) => a.createdAt - b.createdAt)
+      // The repo's checkout, read back off its sessions — the most common answer wins if
+      // two checkouts somehow share a name.
+      const commits = repos[mostCommon(list.map((t) => t.projectPath))]?.commits ?? 0
+      const building = this._syncBuilding(name, plot, commits)
+      seenBuildings.add(name)
+      building.live = false
+      building.active = false
 
-      list.forEach((thread, i) => {
+      // Oldest session first, so a given one keeps its standing spot as siblings come and go.
+      list.sort((a, b) => a.createdAt - b.createdAt)
+      let slot = 0
+      for (const thread of list) {
+        if (!outside(thread)) {
+          indoors.add(thread.id)
+          continue
+        }
         const status = statusFor(thread, now)
         if (stats[status] !== undefined) stats[status]++
         if (status === 'waiting' || status === 'blocked') urgent.add(plot.id)
         if (status === 'waiting' || status === 'blocked' || status === 'working') active.add(plot.id)
         stats.agents++
-
-        const building = this._syncBuilding(thread, plot, i)
-        seenBuildings.add(thread.id)
+        if (thread.running) building.live = true
+        if (status === 'waiting' || status === 'blocked' || status === 'working') building.active = true
 
         roster.push({
           id: thread.id,
           thread,
           status,
-          site: this._workSite(plot, building, i),
+          site: this._workSite(plot, building, slot++),
           // Where the work actually is. A working astronaut circles it rather than standing
           // at one spot, so it needs the building, not just a place to stand near it.
           anchor: building.mesh.position.clone(),
         })
-      })
+      }
     }
 
-    // Anything that dropped out of the scan — archived, or a transcript that vanished —
-    // takes its building down and walks its astronaut back to the ship.
+    // A repo that dropped out of the scan — every session archived, or switched off in the
+    // sidebar — takes its building down and walks its crew back to the ship.
     for (const [id, entry] of this.buildings) {
       if (!seenBuildings.has(id)) this._removeBuilding(id, entry)
     }
 
     this.threads = new Map(live.map((t) => [t.id, t]))
+    this.indoors = indoors
     this.urgentPlots = urgent
     this.activePlots = active
     this._rebuildNavigation()
     this.stats = { ...stats, done: stats.celebrating }
     this.astronauts.setRoster(roster, this._world())
     return this.stats
+  }
+
+  /**
+   * A stand-in for a session that is indoors, so its card has somewhere to sit: over the
+   * door of the repo's building, wearing the dormant colours. Nothing in the world is drawn
+   * for it, and it is never the astronauts' selection — only the card's.
+   */
+  indoorsFor(id) {
+    const thread = this.threads.get(id)
+    if (!thread || !this.indoors?.has(id)) return null
+    const entry = this.buildings.get(thread.project || 'unknown')
+    if (!entry) return null
+    const p = entry.mesh.position
+    const height = (entry.mesh.userData.height || 2) * (entry.scale || 1)
+    return {
+      id,
+      thread,
+      indoors: true,
+      status: 'indoors',
+      pos: new THREE.Vector3(p.x, p.y + height * 0.55, p.z),
+      trim: new THREE.Color(0x5a5a70),
+      eye: new THREE.Color(0.7, 0.8, 1.4),
+      faceFrame: FACE.sleep,
+    }
   }
 
   _syncPlots(projects) {
@@ -425,26 +489,28 @@ export class Colony {
     return PLOT_PALETTE[start]
   }
 
-  _syncBuilding(thread, plot, index) {
-    let entry = this.buildings.get(thread.id)
+  /** The repo's one building, on the root tile, sized by what has been committed there. */
+  _syncBuilding(name, plot, commits) {
+    let entry = this.buildings.get(name)
     // Whole, always. A building that has finished rising is a building you can see all of.
     const target = 1
+    const index = 0
 
     if (!entry) {
-      const mesh = createBuilding({ seed: hashString(thread.id), accent: plot.accent })
+      const mesh = createBuilding({ seed: hashString(name), accent: plot.accent })
       const pos = plot.worldSlot(index)
       mesh.position.copy(pos)
-      mesh.rotation.y = ((hashString(thread.id) >>> 8) % 360) * (Math.PI / 180)
+      mesh.rotation.y = ((hashString(name) >>> 8) % 360) * (Math.PI / 180)
       // New buildings rise from nothing rather than appearing whole.
       mesh.userData.setProgress(0)
       this.worldGroup.add(mesh)
-      entry = { mesh, plot: plot.id, slot: index, progress: 0, target, retiring: false }
-      this.buildings.set(thread.id, entry)
+      entry = { mesh, plot: plot.id, slot: index, progress: 0, target, retiring: false, scale: 1 }
+      this.buildings.set(name, entry)
     } else {
       // Where this building belongs *now*. Comparing the world position rather than the
       // plot id and slot number is what catches a zone that was rebuilt underneath it: the
       // repo is the same and the slot is the same, but the ground moved, and a habitat left
-      // behind on bare terrain takes its astronaut off the plot with it.
+      // behind on bare terrain takes its crew off the plot with it.
       const want = plot.worldSlot(index, this._slotAt || (this._slotAt = new THREE.Vector3()))
       if (entry.plot !== plot.id || entry.slot !== index || entry.mesh.position.distanceToSquared(want) > 1e-4) {
         entry.plot = plot.id
@@ -453,6 +519,13 @@ export class Colony {
       }
     }
 
+    // Growth is a scale on the whole mesh. The sink-and-rise reveal is done in the shader
+    // in the mesh's own space, so it scales along with it.
+    const scale = buildingScale(commits)
+    if (entry.scale !== scale) {
+      entry.scale = scale
+      entry.mesh.scale.setScalar(scale)
+    }
     entry.target = target
     entry.accent = plot.accent
     entry.retiring = false
@@ -486,7 +559,7 @@ export class Colony {
     for (const entry of this.buildings.values()) {
       if (entry.retiring) continue
       const p = entry.mesh.position
-      const r = (entry.mesh.userData.footprint || 1.2) * 0.8 + AGENT_RADIUS
+      const r = (entry.mesh.userData.footprint || 1.2) * (entry.scale || 1) * 0.8 + AGENT_RADIUS
       obstacles.push({ x: p.x, z: p.z, r })
     }
     // Ground clutter counts too. A crate is only knee-high, but an astronaut walking
@@ -636,7 +709,7 @@ export class Colony {
     // Clear of the building's *own* footprint rather than a fixed 2.35: a big habitat blocks
     // more ground than a small one, and a standing spot inside that radius is a spot the
     // crew can never actually reach — it walks at the wall for as long as the thread lives.
-    const blocked = (entry.mesh.userData.footprint || 1.2) * 0.8 + AGENT_RADIUS
+    const blocked = (entry.mesh.userData.footprint || 1.2) * (entry.scale || 1) * 0.8 + AGENT_RADIUS
     const stand = Math.max(2.35, blocked + 0.5)
     let site = new THREE.Vector3(b.x + Math.cos(a) * stand, 0, b.z + Math.sin(a) * stand)
     // Outward points straight off the zone for a building on its edge, and an astronaut
@@ -687,8 +760,8 @@ export class Colony {
 
   _growBuildings(dt) {
     for (const [id, entry] of this.buildings) {
-      // A running thread's site creeps upward while you watch it.
-      if (!entry.retiring && this._isLive(id)) entry.target = Math.min(1, entry.target + LIVE_GROWTH * dt)
+      // A site with a running session creeps upward while you watch it.
+      if (!entry.retiring && entry.live) entry.target = Math.min(1, entry.target + LIVE_GROWTH * dt)
       const next = THREE.MathUtils.damp(entry.progress, entry.target, 1.8, dt)
       if (Math.abs(next - entry.progress) > 0.0005) {
         entry.progress = next
@@ -696,17 +769,6 @@ export class Colony {
       }
       if (entry.retiring && entry.progress <= 0.02) this._removeBuilding(id, entry)
     }
-  }
-
-  _isLive(id) {
-    const thread = this.threads.get(id)
-    return Boolean(thread && thread.running)
-  }
-
-  /** A site somebody is standing at: running, or stopped waiting on you. */
-  _isActive(id) {
-    const thread = this.threads.get(id)
-    return Boolean(thread && (thread.running || thread.unread || thread.hasError))
   }
 
   _badgeFor(agent) {
@@ -788,14 +850,15 @@ export class Colony {
       // gated on the building being unfinished as well, which was fine while "unfinished"
       // was most of them and useless the moment buildings stopped standing in a hole.
       if (entry.progress <= 0.03) continue
-      if (!this._isActive(id)) continue
+      if (!entry.active) continue
       const p = entry.mesh.position
+      const scale = entry.scale || 1
       sites.push({
         x: p.x,
         z: p.z,
         y: p.y,
-        radius: (entry.mesh.userData.footprint || 1.4) + 0.35,
-        height: Math.max(0.6, entry.mesh.userData.height * entry.progress + 0.5),
+        radius: (entry.mesh.userData.footprint || 1.4) * scale + 0.35,
+        height: Math.max(0.6, entry.mesh.userData.height * scale * entry.progress + 0.5),
       })
     }
     this.scaffolds.update(sites)
@@ -833,6 +896,23 @@ export class Colony {
     disposeTree(this.labelGroup)
     this.scene.remove(this.worldGroup, this.plotGroup, this.labelGroup)
   }
+}
+
+/** The most frequent non-empty value in a list, or `''`. */
+function mostCommon(values) {
+  const counts = new Map()
+  let best = ''
+  let bestCount = 0
+  for (const v of values) {
+    if (!v) continue
+    const n = (counts.get(v) ?? 0) + 1
+    counts.set(v, n)
+    if (n > bestCount) {
+      best = v
+      bestCount = n
+    }
+  }
+  return best
 }
 
 function disposeTree(root) {
