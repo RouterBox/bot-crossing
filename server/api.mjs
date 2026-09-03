@@ -1,7 +1,8 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import {
   defaultHarness,
   harnessAppStartedAt,
@@ -12,6 +13,7 @@ import {
   setThreadArchived,
 } from './scan.mjs'
 
+const execFileAsync = promisify(execFile)
 const here = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = process.env.BOT_CROSSING_DATA || path.join(here, '..', 'data')
 const STATE_FILE = path.join(DATA_DIR, 'colony.json')
@@ -28,6 +30,7 @@ const emptyState = () => ({
   archived: [],
   archivedAt: {},
   opened: [],
+  hiddenProjects: [],
   plots: {},
   seen: {},
   settings: null,
@@ -45,6 +48,7 @@ async function readState() {
       archived: asArray(raw.archived),
       archivedAt: asObject(raw.archivedAt),
       opened: asArray(raw.opened),
+      hiddenProjects: asArray(raw.hiddenProjects),
       plots: asObject(raw.plots),
       seen: asObject(raw.seen),
       settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : null,
@@ -66,6 +70,7 @@ async function writeState(next) {
     archived: asArray(next.archived),
     archivedAt: asObject(next.archivedAt),
     opened: asArray(next.opened),
+    hiddenProjects: asArray(next.hiddenProjects),
     plots: asObject(next.plots),
     seen: asObject(next.seen),
     settings: next.settings && typeof next.settings === 'object' ? next.settings : null,
@@ -76,6 +81,41 @@ async function writeState(next) {
   await fsp.writeFile(tmp, JSON.stringify(state, null, 2))
   await fsp.rename(tmp, STATE_FILE)
   return state
+}
+
+/**
+ * How much has actually been committed in each repo. A zone's one building is sized by this
+ * rather than by how many sessions ran there — sessions are the crew, commits are the work.
+ *
+ * Git is the only thing that knows, and on Windows a `rev-list --count` is 200–500 ms, so
+ * the answers are cached for a few minutes and the misses run in parallel. A folder that is
+ * not a repo, or a machine without git, counts as zero rather than as an error.
+ */
+const COMMITS_TTL_MS = 5 * 60 * 1000
+const commitCache = new Map()
+
+async function commitCounts(dirs) {
+  const now = Date.now()
+  const out = {}
+  await Promise.all(
+    dirs.map(async (dir) => {
+      const hit = commitCache.get(dir)
+      if (hit && now - hit.at < COMMITS_TTL_MS) {
+        out[dir] = { commits: hit.commits }
+        return
+      }
+      let commits = 0
+      try {
+        const { stdout } = await execFileAsync('git', ['-C', dir, 'rev-list', '--count', 'HEAD'], { timeout: 10000 })
+        commits = Number(stdout.trim()) || 0
+      } catch {
+        /* not a repo, or no git — an unbuilt plot */
+      }
+      commitCache.set(dir, { commits, at: now })
+      out[dir] = { commits }
+    })
+  )
+  return out
 }
 
 /**
@@ -232,7 +272,9 @@ export async function apiMiddleware(req, res, next) {
   try {
     if (url.pathname === '/api/threads' && req.method === 'GET') {
       const threads = await reconcileArchived(await scanThreads())
-      return send(res, 200, { threads, scannedAt: Date.now() })
+      const dirs = [...new Set(threads.map((t) => t.projectPath).filter((d) => d && path.isAbsolute(d)))]
+      const repos = await commitCounts(dirs)
+      return send(res, 200, { threads, repos, scannedAt: Date.now() })
     }
 
     if (url.pathname === '/api/harnesses' && req.method === 'GET') {

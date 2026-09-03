@@ -219,6 +219,21 @@ export class Hud {
     )
     body.appendChild(light)
 
+    // Crew.
+    const crew = group('Crew')
+    crew.append(
+      this._slider(
+        'Outside for',
+        'crewCutoffDays',
+        0,
+        90,
+        1,
+        (v) => (v === 0 ? 'everyone' : `${v} day${v === 1 ? '' : 's'}`),
+        'A session idle longer than this stays indoors. Running ones are always out.'
+      )
+    )
+    body.appendChild(crew)
+
     // View.
     const view = group('View')
     view.append(
@@ -343,6 +358,13 @@ export class Hud {
     on('#btn-copy-path', 'click', () => this.actions.copyProjectPath?.())
     on('#btn-locate', 'click', () => this.actions.focusProject?.(this.project?.name))
     on('#btn-close-project', 'click', () => this.actions.closeProject?.())
+    // Typing in the box narrows the repo's session list; the list is re-rendered from the
+    // last project the page handed over, so it does not have to wait for the next poll.
+    this.threadFilter = ''
+    on('.side .filter', 'input', (e) => {
+      this.threadFilter = e.target.value.trim().toLowerCase()
+      if (this._projectData) this.setProject(this._projectData)
+    })
     on('.help', 'click', (e) => {
       if (e.target === this.$('.help')) this.toggleHelp(false)
     })
@@ -376,17 +398,23 @@ export class Hud {
    * can carry a count and an alarm without running out of room at eleven repos.
    */
   setLegend(projects, activeName = null) {
-    const signature = projects.map((p) => `${p.name}:${p.count}:${p.accent}:${p.urgent ? 1 : 0}`).join('|') + `~${activeName}`
+    const signature =
+      projects.map((p) => `${p.name}:${p.count}:${p.accent}:${p.urgent ? 1 : 0}:${p.hidden ? 1 : 0}`).join('|') +
+      `~${activeName}`
     if (this._last.legend === signature) return
     this._last.legend = signature
 
     const wrap = this.$('.projects')
     wrap.innerHTML = ''
+    let hidden = 0
     for (const p of projects) {
+      if (p.hidden) hidden++
+      const row = document.createElement('div')
+      row.className = `repo-row${p.hidden ? ' off' : ''}`
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'repo'
-      b.title = `${p.count} thread${p.count === 1 ? '' : 's'} in ${p.name}`
+      b.title = `${p.count} session${p.count === 1 ? '' : 's'} in ${p.name}`
       b.setAttribute('aria-pressed', String(p.name === activeName))
       b.innerHTML =
         `<i class="swatch" style="background:${hex(p.accent)};color:${hex(p.accent)}"></i>` +
@@ -394,9 +422,22 @@ export class Hud {
         (p.urgent ? '<i class="alarm"></i>' : '') +
         `<span class="count">${p.count}</span>`
       b.addEventListener('click', () => this.actions.pickProject?.(p.name))
-      wrap.appendChild(b)
+      // The switch. Off takes the repo out of the world; the row stays so it can come back.
+      const eye = document.createElement('button')
+      eye.type = 'button'
+      eye.className = 'repo-eye'
+      eye.title = p.hidden ? `Show ${p.name} in the colony` : `Hide ${p.name} from the colony`
+      eye.innerHTML = p.hidden ? ICON.eyeOff : ICON.eye
+      eye.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.actions.toggleProject?.(p.name)
+      })
+      row.append(b, eye)
+      wrap.appendChild(row)
     }
-    this.$('.sec-head span').textContent = `${projects.length} repo${projects.length === 1 ? '' : 's'}`
+    const shown = projects.length - hidden
+    this.$('.sec-head span').textContent =
+      `${shown} repo${shown === 1 ? '' : 's'}` + (hidden ? ` · ${hidden} hidden` : '')
   }
 
   /**
@@ -408,19 +449,30 @@ export class Hud {
     const panel = this.$('.side')
     if (!project) {
       this.project = null
+      this._projectData = null
       if (this._last.project === null) return
       this._last.project = null
       panel.classList.remove('drilled')
       return
     }
 
-    this.project = project
+    // A different repo starts with a clean search box; the same one keeps what you typed.
+    if (this._projectData?.name !== project.name) {
+      this.threadFilter = ''
+      this.$('.side .filter').value = ''
+    }
+    this._projectData = project
+    const filter = this.threadFilter
+    const rows = filter
+      ? project.threads.filter((t) => `${t.title} ${t.worktree || ''}`.toLowerCase().includes(filter))
+      : project.threads
+    this.project = { ...project, threads: rows }
     // The minute is part of the signature because `ago()` is: without it a repo where
     // nothing is happening keeps whatever "4m ago" it was first drawn with, for as long as
     // you leave the panel open.
     const signature =
-      `${project.name}~${project.path}~${project.accent}~${project.selectedId}~${Math.floor(Date.now() / 60000)}~` +
-      project.threads.map((t) => `${t.id}:${t.status}:${t.title}:${t.lastActivityAt}`).join('|')
+      `${project.name}~${project.path}~${project.accent}~${project.selectedId}~${filter}~${Math.floor(Date.now() / 60000)}~` +
+      rows.map((t) => `${t.id}:${t.status}:${t.title}:${t.lastActivityAt}`).join('|')
     panel.classList.add('drilled')
     if (this._last.project === signature) return
     this._last.project = signature
@@ -439,15 +491,16 @@ export class Hud {
 
     const n = project.threads.length
     const waiting = project.threads.filter((t) => t.status === 'waiting' || t.status === 'blocked').length
+    const shown = filter ? `${rows.length} of ${n}` : `${n}`
     this.$('.side .threads-head').innerHTML =
-      `<span>${n} thread${n === 1 ? '' : 's'}</span>` + (waiting ? `<span class="want">${waiting} need you</span>` : '')
+      `<span>${shown} session${n === 1 ? '' : 's'}</span>` + (waiting ? `<span class="want">${waiting} need you</span>` : '')
 
     const list = this.$('.side .threads')
     // A poll rewrites these rows every time a live thread's timestamp moves. Losing your
     // place in a forty-thread repo every fifteen seconds would make the list unusable.
     const scroll = list.scrollTop
     list.innerHTML = ''
-    for (const t of project.threads) {
+    for (const t of rows) {
       const b = document.createElement('button')
       b.type = 'button'
       b.className = `thread ${statusClass(t.status)}`
@@ -846,6 +899,7 @@ const TEMPLATE = `
         </div>
       </div>
       <div class="threads-head"></div>
+      <input class="filter" type="search" placeholder="Find a session…" spellcheck="false" autocomplete="off">
       <div class="threads"></div>
     </div>
   </div>

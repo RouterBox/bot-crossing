@@ -47,8 +47,10 @@ const engine = new Engine(settings).mount(app)
 const rig = new CameraRig(engine.camera, engine.canvas, settings)
 const colony = new Colony(engine.scene, settings, engine.camera, engine.renderer)
 
-let state = { archived: [], archivedAt: {}, opened: [], plots: {}, seen: {} }
+let state = { archived: [], archivedAt: {}, opened: [], hiddenProjects: [], plots: {}, seen: {} }
 let threads = []
+/** Commit counts per repo path, from the last scan — what sizes each repo's building. */
+let repos = {}
 /** Last legend built for the bottom bar, kept so the open zone's chip can light up between polls. */
 let legendProjects = []
 /** The zone layout as last written to the colony file, so an unchanged map is not re-saved. */
@@ -122,6 +124,21 @@ const actions = {
 
   /** The legend, and anything else that means "show me this repo". */
   pickProject: (name) => selectProject(name, { fly: true }),
+
+  /**
+   * Switch a repo off, or back on. Off means gone from the world — no plot, no building, no
+   * crew, no counts — but not from the list, which is where it gets switched back on. Kept
+   * in the colony file, alongside the archive list, because it is the colony's own idea.
+   */
+  toggleProject: (name) => {
+    const hidden = new Set(state.hiddenProjects || [])
+    if (hidden.has(name)) hidden.delete(name)
+    else hidden.add(name)
+    state.hiddenProjects = [...hidden]
+    queueSave()
+    if (hidden.has(name) && selectedProject === name) actions.closeProject()
+    applyThreads(threads)
+  },
 
   /** Back out of one repo to the list of all of them. The panel itself never leaves. */
   closeProject: () => {
@@ -235,7 +252,9 @@ window.addEventListener('resize', () => hud.setSideWidth(sideWidth()))
 
 function select(id, { fly = false } = {}) {
   selectedId = id
-  const agent = id ? colony.agentFor(id) : null
+  // A session that is indoors has no astronaut, but it still has a card: it sits over the
+  // repo's building instead, which is where that session lives.
+  const agent = id ? colony.agentFor(id) || colony.indoorsFor(id) : null
   if (!agent) {
     selectedId = null
     colony.astronauts.setSelected(null)
@@ -243,7 +262,7 @@ function select(id, { fly = false } = {}) {
     syncProject()
     return
   }
-  colony.astronauts.setSelected(agent)
+  colony.astronauts.setSelected(agent.indoors ? null : agent)
   const thread = threads.find((t) => t.id === id) || agent.thread
   hud.setSelection(agent, thread)
   // Picking somebody is also picking the zone they are standing on: the sidebar follows.
@@ -538,24 +557,40 @@ window.addEventListener('keydown', (e) => {
 
 // ── data ──────────────────────────────────────────────────────────────────────────────
 
-function applyThreads(list) {
+function applyThreads(list, nextRepos) {
   threads = list
+  if (nextRepos) repos = nextRepos
   const archivedSet = new Set(state.archived)
-  const stats = colony.setThreads(list, archivedSet)
+  const hidden = new Set(state.hiddenProjects || [])
+  const days = Number(settings.get('crewCutoffDays')) || 0
+  const cutoffMs = days > 0 ? days * 24 * 60 * 60 * 1000 : Infinity
+  const stats = colony.setThreads(list, archivedSet, { hidden, repos, cutoffMs })
   hud.setStats(stats)
 
-  legendProjects = colony.plotOrder
-    .map((plot) => ({
-      name: plot.name,
-      accent: plot.accent,
-      count: list.filter((t) => !t.archived && !archivedSet.has(t.id) && t.project === plot.name).length,
-      urgent: colony.urgentPlots?.has(plot.id) ?? false,
-    }))
+  // Every repo with a session, switched-off ones included — the list is where they come
+  // back on. Counts are all sessions, indoors or out; the header counts only the crowd.
+  const counts = new Map()
+  for (const t of list) {
+    if (t.archived || archivedSet.has(t.id)) continue
+    const key = t.project || 'unknown'
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  legendProjects = [...counts]
+    .map(([name, count]) => {
+      const plot = colony.plots.get(name)
+      return {
+        name,
+        count,
+        accent: plot?.accent ?? 0x4a4d5a,
+        urgent: plot ? (colony.urgentPlots?.has(plot.id) ?? false) : false,
+        hidden: hidden.has(name),
+      }
+    })
     .sort((a, b) => b.count - a.count)
 
   // Keep the card honest if the thread it is showing changed underneath it.
   if (selectedId) {
-    const still = colony.agentFor(selectedId)
+    const still = colony.agentFor(selectedId) || colony.indoorsFor(selectedId)
     if (still) hud.setSelection(still, list.find((t) => t.id === selectedId) || still.thread)
     else select(null, {})
   }
@@ -579,7 +614,7 @@ async function poll() {
   polling = true
   try {
     const res = await fetchThreads()
-    applyThreads(res.threads || [])
+    applyThreads(res.threads || [], res.repos || {})
     hud.removeBoot()
   } catch (err) {
     hud.toast(err.message || 'Could not reach the thread scanner', 'err')
@@ -659,7 +694,7 @@ settings.onChange((changed, scope) => {
   if (scope.render || changed.has('fov')) engine.applySettings()
   colony.onSettingsChanged(changed, scope)
   if (changed.has('showFps')) hud.syncSettings()
-  if (changed.has('maxAgents')) applyThreads(threads)
+  if (changed.has('maxAgents') || changed.has('crewCutoffDays')) applyThreads(threads)
 })
 
 // ── frame ─────────────────────────────────────────────────────────────────────────────
@@ -674,7 +709,7 @@ engine.add({
     if (selectedId) {
       hud.updateAvatar(colony.astronauts.faceTexture.image)
       // A selected astronaut that walked off the roster should not keep a stale card open.
-      const agent = colony.agentFor(selectedId)
+      const agent = colony.agentFor(selectedId) || colony.indoorsFor(selectedId)
       if (!agent) select(null, {})
       else hud.placeCard(screenOf(agent))
     }

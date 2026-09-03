@@ -136,6 +136,7 @@ const DEFAULTS = {
   fov: 38,
 
   // Behaviour
+  crewCutoffDays: 7, // sessions idle longer than this stay indoors; 0 puts everyone out
   autoQuality: true, // drop render scale when frames get expensive
   autoFrame: false, // ease the camera back to isometric when you stop dragging; opt-in
   showFps: false,
