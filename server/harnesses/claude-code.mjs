@@ -107,16 +107,21 @@ function readTranscriptMeta(records) {
  *     not next to it, so the path only gives the repo's *name*; the desktop record carries
  *     the real path in `originCwd`, which `projectOf` prefers anyway. Without this, every
  *     terminal-started thread in such a worktree claimed a zone named after the worktree.
+ *   - `<parent>/.agentbox-worktrees/<repo>/<name>` — AgentBox's bolt worktrees, kept beside
+ *     the checkout they came from, so the repo is `<parent>/<repo>`.
  *
  * Either separator: on Windows the same cwd arrives with backslashes.
  */
 const CLAUDE_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)/
 const HOME_WORKTREE = /[\\/]\.claude-worktrees[\\/]([^\\/]+)[\\/]([^\\/]+)/
+const AGENTBOX_WORKTREE = /^(.*)[\\/]\.agentbox-worktrees[\\/]([^\\/]+)[\\/]([^\\/]+)/
 function splitWorktree(cwd) {
   let m = CLAUDE_WORKTREE.exec(cwd)
   if (m) return { root: cwd.slice(0, m.index), name: '', worktree: m[1] }
   m = HOME_WORKTREE.exec(cwd)
   if (m) return { root: '', name: m[1], worktree: m[2] }
+  m = AGENTBOX_WORKTREE.exec(cwd)
+  if (m) return { root: path.join(m[1], m[2]), name: '', worktree: m[3] }
   return { root: cwd, name: '', worktree: '' }
 }
 
