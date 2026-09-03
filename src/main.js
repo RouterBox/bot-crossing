@@ -66,6 +66,8 @@ let hoverId = null
 let statusCursor = 0
 /** Highest lobby line seen, so each poll asks only for what is new. */
 let lobbySeq = 0
+/** Tower contexts keyed by Claude session id — which robots the phone can see. */
+let towerBySession = new Map()
 let pendingSave = 0
 const hoverGround = new THREE.Vector3()
 
@@ -648,6 +650,16 @@ async function pollLobby() {
     const snap = await fetchLobby(lobbySeq)
     if (snap.seq > lobbySeq) lobbySeq = snap.seq
     hud.setLobby(snap)
+    // Who on the tower is also a robot here. Keyed by session id, which is the thread id.
+    const next = new Map()
+    for (const r of snap.roster || []) if (r.sessionId) next.set(r.sessionId, r)
+    const changed = next.size !== towerBySession.size || [...next].some(([id, r]) => towerBySession.get(id)?.state !== r.state)
+    if (changed) {
+      towerBySession = next
+      hud.setTowerMap(towerBySession)
+      syncProject()
+      if (selectedId) select(selectedId, {})
+    }
   } catch {
     hud.setLobby({ available: false, error: 'no colony server', lines: [], roster: [] })
   } finally {

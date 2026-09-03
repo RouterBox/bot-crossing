@@ -61,6 +61,31 @@ function remember(line) {
 }
 
 /**
+ * What was said before the town joined, so the pane is not blank until somebody speaks.
+ * The tower's transcript stores each room line as `Nick: text`, so the nick is read back
+ * off the front of it. Best effort, once.
+ */
+const HISTORY = 60
+async function preload() {
+  const res = await api(`/transcript?context=lobby&since=0`)
+  const lines = (res.lines || []).slice(-HISTORY)
+  for (const l of lines) {
+    const text = String(l.text || '')
+    const cut = text.indexOf(': ')
+    const nick = cut > 0 && cut < 40 ? text.slice(0, cut) : ''
+    remember({
+      at: l.at,
+      from: l.role === 'user' ? 'user' : '',
+      nick: nick || (l.role === 'user' ? 'Phone' : 'Tower'),
+      text: nick ? text.slice(cut + 2) : text,
+      addressed: false,
+      self: nick === NICK,
+    })
+  }
+  state.preloaded = true
+}
+
+/**
  * One parked read at a time, forever. Room lines arrive tagged `room: "lobby"`; anything
  * else in this inbox is a direct message to the town, which nobody sends yet, and is dropped.
  */
@@ -68,6 +93,7 @@ async function loop() {
   for (;;) {
     try {
       if (!state.registered) await register()
+      if (!state.preloaded) await preload()
       const res = await api(`/session/inbox?name=${NAME}&wait=${WAIT_S}`, null, AbortSignal.timeout((WAIT_S + 15) * 1000))
       for (const m of res.messages || []) {
         if (m.room !== 'lobby') continue
@@ -103,7 +129,16 @@ export async function roster() {
     const res = await api('/contexts')
     state.roster = (res.contexts || [])
       .filter((c) => !c.room)
-      .map((c) => ({ name: c.name, nick: c.nick || c.name, state: c.state || 'idle', external: Boolean(c.external) }))
+      .map((c) => ({
+        name: c.name,
+        nick: c.nick || c.name,
+        state: c.state || 'idle',
+        external: Boolean(c.external),
+        // The join to a robot: a context registered with its Claude session id.
+        sessionId: c.sessionId || '',
+        kind: c.kind || '',
+        cwd: c.cwd || '',
+      }))
     state.rosterAt = Date.now()
   } catch (err) {
     state.error = String(err?.message || err)

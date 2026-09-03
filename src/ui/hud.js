@@ -448,6 +448,18 @@ export class Hud {
       `${shown} repo${shown === 1 ? '' : 's'}` + (hidden ? ` · ${hidden} hidden` : '')
   }
 
+  /** Which sessions the phone can see, by session id — drawn as a mark on their rows. */
+  setTowerMap(map) {
+    this.towerBySession = map
+  }
+
+  /** `<i class="tw live">` for a session the tower knows, or nothing. */
+  _towerMark(id) {
+    const t = this.towerBySession?.get(id)
+    if (!t) return ''
+    return `<i class="tw ${t.state === 'live' ? 'live' : 'idle'}" title="On the phone as ${escapeHtml(t.nick)} · ${t.state}"></i>`
+  }
+
   /**
    * The tower's room and roster, under the repo list. Lines are appended rather than
    * redrawn, so the scroll position survives a poll; the roster is redrawn only when who is
@@ -466,16 +478,18 @@ export class Hud {
     }
 
     const roster = snap?.roster || []
-    const rosterSig = roster.map((r) => `${r.name}:${r.nick}:${r.state}`).join('|')
+    const rosterSig = roster.map((r) => `${r.name}:${r.nick}:${r.state}:${r.sessionId || ''}`).join('|')
     if (this._last.roster !== rosterSig) {
       this._last.roster = rosterSig
       const wrap = this.$('.lobby .roster')
       wrap.innerHTML = ''
       for (const r of roster) {
         const chip = document.createElement('span')
-        chip.className = `who ${r.state === 'live' ? 'live' : 'idle'}`
-        chip.title = `${r.name} · ${r.state}`
+        chip.className = `who ${r.state === 'live' ? 'live' : 'idle'}${r.sessionId ? ' robot' : ''}`
+        chip.title = `${r.name} · ${r.state}${r.sessionId ? ' · click to find its robot' : ''}`
         chip.innerHTML = `<i></i>${escapeHtml(r.nick)}`
+        // A chip with a session id is a robot in the town: clicking flies to it.
+        if (r.sessionId) chip.addEventListener('click', () => this.actions.focusThread?.(r.sessionId))
         wrap.appendChild(chip)
       }
     }
@@ -529,7 +543,7 @@ export class Hud {
     // you leave the panel open.
     const signature =
       `${project.name}~${project.path}~${project.accent}~${project.selectedId}~${filter}~${Math.floor(Date.now() / 60000)}~` +
-      rows.map((t) => `${t.id}:${t.status}:${t.title}:${t.lastActivityAt}`).join('|')
+      rows.map((t) => `${t.id}:${t.status}:${t.title}:${t.lastActivityAt}:${this.towerBySession?.get(t.id)?.state || ''}`).join('|')
     panel.classList.add('drilled')
     if (this._last.project === signature) return
     this._last.project = signature
@@ -565,7 +579,7 @@ export class Hud {
       b.title = STATUS_LABEL[t.status] || t.status
       b.innerHTML =
         '<i class="pip"></i>' +
-        `<span class="t">${escapeHtml(t.title || 'Untitled thread')}</span>` +
+        `<span class="t">${escapeHtml(t.title || 'Untitled thread')}${this._towerMark(t.id)}</span>` +
         `<span class="when">${ago(t.lastActivityAt)}</span>` +
         (t.worktree ? `<span class="wt">⑂ ${escapeHtml(t.worktree)}</span>` : '')
       b.addEventListener('click', () => this.actions.focusThread?.(t.id))
@@ -616,6 +630,9 @@ export class Hud {
     if (thread.worktree) bits.push(`<span class="tag">⑂ ${escapeHtml(thread.worktree)}</span>`)
     if (thread.gitBranch) bits.push(`<span class="tag">${escapeHtml(thread.gitBranch)}</span>`)
     if (thread.model) bits.push(`<span class="tag">${escapeHtml(shortModel(thread.model))}</span>`)
+    // The phone knows this one: which name it goes by there, and whether anyone is listening.
+    const tower = this.towerBySession?.get(thread.id)
+    if (tower) bits.push(`<span class="tag tower ${tower.state}">${escapeHtml(tower.nick)} · ${escapeHtml(tower.state)}</span>`)
     bits.push(`<span>${ago(thread.lastActivityAt)}</span>`)
     meta.innerHTML = bits.join('')
 
