@@ -199,7 +199,22 @@ function send(res, status, body) {
   res.end(payload)
 }
 
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
+/**
+ * Hosts this server answers to. Loopback always; anything else only by explicit allowlist
+ * (`BOT_CROSSING_HOSTS=routerbox.xyz`), which is how the town is reached from the phone —
+ * through a reverse proxy that carries that name and holds its own secret at the door.
+ * Nothing here relaxes the Origin rule: a page served from an allowed host is the only
+ * thing that can post.
+ */
+const LOCAL_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  ...String(process.env.BOT_CROSSING_HOSTS || '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
+])
 
 /** Hostname out of a `Host:` or `Origin:` value, with the port and any brackets stripped. */
 function hostnameOf(value) {

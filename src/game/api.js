@@ -1,5 +1,12 @@
+/**
+ * API URLs are built on the page's own base, so a build mounted at `/town/` behind a proxy
+ * asks for `/town/api/…` and the proxy strips the prefix back off. A page at `/` is unchanged.
+ */
+const BASE = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
+const at = (path) => BASE + path
+
 async function req(url, options) {
-  const res = await fetch(url, options)
+  const res = await fetch(at(url), options)
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`)
   return body
@@ -13,6 +20,8 @@ const post = (url, payload) =>
   })
 
 export const fetchThreads = () => req('/api/threads')
+/** The same prefix for URLs that are not fetched here — the audio player's source, say. */
+export const apiUrl = (path) => at(path)
 export const fetchState = () => req('/api/state')
 
 export const saveState = (state) =>

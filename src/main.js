@@ -21,6 +21,7 @@ import {
   sayLobby,
   fetchSpawnDirs,
   spawnSession,
+  apiUrl,
 } from './game/api.js'
 
 /**
@@ -86,7 +87,7 @@ function playNextClip() {
   const next = lobbyQueue.shift()
   hud.setLobbyPlaying(next ?? null, lobbyQueue.length)
   if (next == null) return
-  lobbyPlayer.src = `/api/lobby/audio/${next}`
+  lobbyPlayer.src = apiUrl(`/api/lobby/audio/${next}`)
   lobbyPlayer.play().catch(() => playNextClip())
 }
 
