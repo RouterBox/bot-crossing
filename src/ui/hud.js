@@ -45,6 +45,17 @@ const ICON = {
   orbit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="4"/><ellipse cx="12" cy="12" rx="10.2" ry="4.6" transform="rotate(-24 12 12)"/><circle cx="21" cy="8.2" r="1.5" fill="currentColor" stroke="none"/></svg>`,
 }
 
+const AUDIO_ICON = {
+  off: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>`,
+  latest: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>`,
+  all: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>`,
+}
+const AUDIO_TITLE = {
+  off: 'Room muted — click to hear only the newest line',
+  latest: 'Newest line only — click to hear every line in order',
+  all: 'Every line, in order — click to mute',
+}
+
 const STAT_DEFS = [
   { key: 'working', label: 'building', cls: 'working' },
   { key: 'waiting', label: 'need you', cls: 'waiting' },
@@ -358,6 +369,7 @@ export class Hud {
     on('#btn-copy-path', 'click', () => this.actions.copyProjectPath?.())
     on('#btn-locate', 'click', () => this.actions.focusProject?.(this.project?.name))
     on('#btn-close-project', 'click', () => this.actions.closeProject?.())
+    on('#btn-lobby-audio', 'click', () => this.actions.cycleLobbyAudio?.())
     on('.lobby-say', 'submit', (e) => {
       e.preventDefault()
       const input = this.$('.lobby-say input')
@@ -387,6 +399,19 @@ export class Hud {
   syncSettings() {
     for (const c of this.controls) c.sync()
     this.$('.fps').classList.toggle('on', Boolean(this.settings.get('showFps')))
+    const mode = this.settings.get('lobbyAudio') || 'off'
+    const b = this.$('#btn-lobby-audio')
+    b.innerHTML = AUDIO_ICON[mode] || AUDIO_ICON.off
+    b.title = AUDIO_TITLE[mode] || AUDIO_TITLE.off
+    b.setAttribute('aria-pressed', String(mode !== 'off'))
+  }
+
+  /** Which line is being spoken right now, and how many are waiting behind it. */
+  setLobbyPlaying(seq, waiting) {
+    for (const row of this.$('.lobby-lines').querySelectorAll('.line.playing')) row.classList.remove('playing')
+    if (seq != null) this.$('.lobby-lines').querySelector(`.line[data-seq="${seq}"]`)?.classList.add('playing')
+    const q = this.$('.lobby-queue')
+    q.textContent = waiting > 0 ? `+${waiting}` : ''
   }
 
   setStats(stats) {
@@ -495,6 +520,11 @@ export class Hud {
     }
 
     const list = this.$('.lobby-lines')
+    // Clips can land a beat after their line: mark rows already drawn as the index fills in.
+    for (const c of snap?.clips || []) {
+      const row = list.querySelector(`.line[data-seq="${c.seq}"]:not(.has-clip)`)
+      if (row) this._addReplay(row, c.seq)
+    }
     const lines = snap?.lines || []
     if (!lines.length) return
     // Stick to the bottom only if the reader was already there; a scrolled-up reader is
@@ -504,11 +534,28 @@ export class Hud {
       const row = document.createElement('div')
       row.className = `line${l.from === 'user' ? ' user' : ''}${l.self ? ' self' : ''}${l.addressed ? ' addressed' : ''}`
       row.title = l.at ? new Date(l.at).toLocaleTimeString() : ''
+      if (l.seq) row.dataset.seq = String(l.seq)
       row.innerHTML = `<span class="nick">${escapeHtml(l.nick || l.from || '?')}</span>${escapeHtml(l.text)}`
+      if (l.seq && (snap.clips || []).some((c) => c.seq === l.seq)) this._addReplay(row, l.seq)
       list.appendChild(row)
     }
     while (list.children.length > 200) list.removeChild(list.firstChild)
     if (atBottom) list.scrollTop = list.scrollHeight
+  }
+
+  /** A small play mark on a line that has a clip; clicking hears that line again. */
+  _addReplay(row, seq) {
+    row.classList.add('has-clip')
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'replay'
+    b.title = 'Hear this line'
+    b.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'
+    b.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.actions.replayClip?.(seq)
+    })
+    row.appendChild(b)
   }
 
   /**
@@ -954,7 +1001,10 @@ const TEMPLATE = `
       <div class="sec-head"><span>Repos</span></div>
       <div class="projects"></div>
       <div class="lobby off">
-        <div class="sec-head"><span>Lobby</span><span class="lobby-state">connecting…</span></div>
+        <div class="sec-head">
+          <span>Lobby</span>
+          <span class="lobby-right"><span class="lobby-queue"></span><span class="lobby-state">connecting…</span><button class="btn icon ghost" id="btn-lobby-audio" title="Room audio" aria-pressed="false"></button></span>
+        </div>
         <div class="roster"></div>
         <div class="lobby-lines"></div>
         <form class="lobby-say">

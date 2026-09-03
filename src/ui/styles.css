@@ -1135,6 +1135,74 @@ body {
   opacity: 0.5;
 }
 
+.side .lobby .sec-head .lobby-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.side .lobby .sec-head #btn-lobby-audio {
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+  margin: -4px -4px -4px 0;
+}
+
+.side .lobby .sec-head #btn-lobby-audio svg {
+  width: 100%;
+  height: 100%;
+}
+
+.side .lobby .sec-head #btn-lobby-audio[aria-pressed='true'] {
+  color: #7fd39a;
+}
+
+.side .lobby .lobby-queue {
+  font-variant-numeric: tabular-nums;
+  color: #7fd39a;
+}
+
+.side .lobby-lines .line {
+  position: relative;
+}
+
+.side .lobby-lines .line.has-clip {
+  padding-right: 24px;
+}
+
+.side .lobby-lines .line .replay {
+  position: absolute;
+  right: 2px;
+  top: 3px;
+  width: 18px;
+  height: 18px;
+  padding: 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.side .lobby-lines .line .replay:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.side .lobby-lines .line .replay svg {
+  width: 100%;
+  height: 100%;
+}
+
+.side .lobby-lines .line.playing {
+  background: rgba(127, 211, 154, 0.12);
+}
+
+.side .lobby-lines .line.playing .replay {
+  color: #7fd39a;
+}
+
 .side .lobby .who.robot {
   cursor: pointer;
 }

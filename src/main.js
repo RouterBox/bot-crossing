@@ -68,6 +68,46 @@ let statusCursor = 0
 let lobbySeq = 0
 /** Tower contexts keyed by Claude session id — which robots the phone can see. */
 let towerBySession = new Map()
+/**
+ * The room's voice. One player, one queue, and a setting that says how much of the room
+ * to hear: nothing, only the newest clip, or everything in order. Clips already on the
+ * tower when the page opened are never queued — the town speaks what happens, not the past.
+ */
+const lobbyPlayer = new Audio()
+let lobbyQueue = []
+let lobbyHeardSeq = 0
+let lobbyPrimed = false
+lobbyPlayer.addEventListener('ended', () => playNextClip())
+lobbyPlayer.addEventListener('error', () => playNextClip())
+
+function playNextClip() {
+  const next = lobbyQueue.shift()
+  hud.setLobbyPlaying(next ?? null, lobbyQueue.length)
+  if (next == null) return
+  lobbyPlayer.src = `/api/lobby/audio/${next}`
+  lobbyPlayer.play().catch(() => playNextClip())
+}
+
+function queueClips(clips) {
+  const mode = settings.get('lobbyAudio')
+  const fresh = clips.filter((c) => c.seq > lobbyHeardSeq).sort((a, b) => a.seq - b.seq)
+  for (const c of fresh) if (c.seq > lobbyHeardSeq) lobbyHeardSeq = c.seq
+  // The first snapshot is the past: remember where it ends and say nothing.
+  if (!lobbyPrimed) {
+    lobbyPrimed = true
+    return
+  }
+  if (mode === 'off' || !fresh.length) return
+  const seqs = fresh.map((c) => c.seq)
+  if (mode === 'latest') {
+    lobbyQueue = []
+    lobbyPlayer.pause()
+    lobbyQueue.push(seqs[seqs.length - 1])
+  } else {
+    lobbyQueue.push(...seqs)
+  }
+  if (lobbyPlayer.paused || lobbyPlayer.ended || !lobbyPlayer.src) playNextClip()
+}
 let pendingSave = 0
 const hoverGround = new THREE.Vector3()
 
@@ -241,6 +281,27 @@ const actions = {
   },
 
   uiVisibility: (visible) => colony.setUiVisible(visible),
+
+  /** Off → latest → all → off. The setting is what the town remembers between visits. */
+  cycleLobbyAudio: () => {
+    const order = ['off', 'latest', 'all']
+    const next = order[(order.indexOf(settings.get('lobbyAudio')) + 1) % order.length]
+    settings.set('lobbyAudio', next)
+    if (next === 'off') {
+      lobbyQueue = []
+      lobbyPlayer.pause()
+      hud.setLobbyPlaying(null, 0)
+    }
+    hud.hint(next === 'off' ? 'Room muted' : next === 'latest' ? 'Room: newest line only' : 'Room: every line, in order')
+    return next
+  },
+
+  /** Hear one line again. Works whatever the mode is: you asked for it. */
+  replayClip: (seq) => {
+    lobbyQueue = [seq]
+    lobbyPlayer.pause()
+    playNextClip()
+  },
 
   /** A line into the tower's room, from the town. The reply lands on the next lobby poll. */
   sayLobby: async (text) => {
@@ -650,6 +711,7 @@ async function pollLobby() {
     const snap = await fetchLobby(lobbySeq)
     if (snap.seq > lobbySeq) lobbySeq = snap.seq
     hud.setLobby(snap)
+    if (snap.available) queueClips(snap.clips || [])
     // Who on the tower is also a robot here. Keyed by session id, which is the thread id.
     const next = new Map()
     for (const r of snap.roster || []) if (r.sessionId) next.set(r.sessionId, r)
@@ -740,6 +802,7 @@ settings.onChange((changed, scope) => {
   colony.onSettingsChanged(changed, scope)
   if (changed.has('showFps')) hud.syncSettings()
   if (changed.has('maxAgents') || changed.has('crewCutoffDays')) applyThreads(threads)
+  if (changed.has('lobbyAudio')) hud.syncSettings()
 })
 
 // ── frame ─────────────────────────────────────────────────────────────────────────────
